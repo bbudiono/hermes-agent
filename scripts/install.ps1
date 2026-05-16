@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 # Hermes Agent Installer for Windows
 # ============================================================================
 # Installation script for Windows (PowerShell).
@@ -53,32 +53,32 @@ $InstallStageProtocolVersion = 1
 
 function Write-Banner {
     Write-Host ""
-    Write-Host "┌─────────────────────────────────────────────────────────┐" -ForegroundColor Magenta
-    Write-Host "│             ⚕ Hermes Agent Installer                    │" -ForegroundColor Magenta
-    Write-Host "├─────────────────────────────────────────────────────────┤" -ForegroundColor Magenta
-    Write-Host "│  An open source AI agent by Nous Research.              │" -ForegroundColor Magenta
-    Write-Host "└─────────────────────────────────────────────────────────┘" -ForegroundColor Magenta
+    Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
+    Write-Host "|             * Hermes Agent Installer                    |" -ForegroundColor Magenta
+    Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
+    Write-Host "|  An open source AI agent by Nous Research.              |" -ForegroundColor Magenta
+    Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
     Write-Host ""
 }
 
 function Write-Info {
     param([string]$Message)
-    Write-Host "→ $Message" -ForegroundColor Cyan
+    Write-Host "-> $Message" -ForegroundColor Cyan
 }
 
 function Write-Success {
     param([string]$Message)
-    Write-Host "✓ $Message" -ForegroundColor Green
+    Write-Host "[OK] $Message" -ForegroundColor Green
 }
 
 function Write-Warn {
     param([string]$Message)
-    Write-Host "⚠ $Message" -ForegroundColor Yellow
+    Write-Host "[!] $Message" -ForegroundColor Yellow
 }
 
 function Write-Err {
     param([string]$Message)
-    Write-Host "✗ $Message" -ForegroundColor Red
+    Write-Host "[X] $Message" -ForegroundColor Red
 }
 
 # ============================================================================
@@ -1533,13 +1533,13 @@ function Start-GatewayIfConfigured {
 
 function Write-Completion {
     Write-Host ""
-    Write-Host "┌─────────────────────────────────────────────────────────┐" -ForegroundColor Green
-    Write-Host "│              ✓ Installation Complete!                   │" -ForegroundColor Green
-    Write-Host "└─────────────────────────────────────────────────────────┘" -ForegroundColor Green
+    Write-Host "+---------------------------------------------------------+" -ForegroundColor Green
+    Write-Host "|              [OK] Installation Complete!                   |" -ForegroundColor Green
+    Write-Host "+---------------------------------------------------------+" -ForegroundColor Green
     Write-Host ""
     
     # Show file locations
-    Write-Host "📁 Your files:" -ForegroundColor Cyan
+    Write-Host "* Your files:" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "   Config:    " -NoNewline -ForegroundColor Yellow
     Write-Host "$HermesHome\config.yaml"
@@ -1551,9 +1551,9 @@ function Write-Completion {
     Write-Host "$HermesHome\hermes-agent\"
     Write-Host ""
     
-    Write-Host "─────────────────────────────────────────────────────────" -ForegroundColor Cyan
+    Write-Host "---------------------------------------------------------" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "🚀 Commands:" -ForegroundColor Cyan
+    Write-Host "* Commands:" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "   hermes              " -NoNewline -ForegroundColor Green
     Write-Host "Start chatting"
@@ -1569,9 +1569,9 @@ function Write-Completion {
     Write-Host "Update to latest version"
     Write-Host ""
     
-    Write-Host "─────────────────────────────────────────────────────────" -ForegroundColor Cyan
+    Write-Host "---------------------------------------------------------" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "⚡ Restart your terminal for PATH changes to take effect" -ForegroundColor Yellow
+    Write-Host "[*] Restart your terminal for PATH changes to take effect" -ForegroundColor Yellow
     Write-Host ""
     
     if (-not $HasNode) {
