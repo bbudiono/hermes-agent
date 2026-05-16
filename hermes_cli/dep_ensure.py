@@ -56,10 +56,16 @@ def _has_system_browser() -> bool:
 
 def _has_hermes_agent_browser() -> bool:
     from hermes_constants import get_hermes_home
-    bin_dir = get_hermes_home() / "node_modules" / ".bin"
+    home = get_hermes_home()
     if _IS_WINDOWS:
-        return (bin_dir / "agent-browser.cmd").is_file()
-    return (bin_dir / "agent-browser").is_file()
+        # install.ps1 installs into $HermesHome\agent-browser\node_modules\.bin\
+        return (home / "agent-browser" / "node_modules" / ".bin" / "agent-browser.cmd").is_file()
+    # install.sh installs globally into $HERMES_HOME/node/bin/ via npm -g --prefix
+    # Also check legacy node_modules/.bin/ path for git-clone installs.
+    return (
+        (home / "node" / "bin" / "agent-browser").is_file()
+        or (home / "node_modules" / ".bin" / "agent-browser").is_file()
+    )
 
 
 def _find_install_script(

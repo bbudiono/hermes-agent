@@ -1546,9 +1546,13 @@ configure_browser_env_from_system_browser() {
         browser_path="$(find_system_browser 2>/dev/null || true)"
     fi
 
-    if [ -z "$browser_path" ] || [ ! -f "$env_file" ]; then
+    if [ -z "$browser_path" ]; then
         return 0
     fi
+
+    # Create .env if it doesn't exist (pip/registry users may not have run setup yet)
+    mkdir -p "$HERMES_HOME"
+    touch "$env_file"
 
     if grep -q '^AGENT_BROWSER_EXECUTABLE_PATH=' "$env_file" 2>/dev/null; then
         log_info "AGENT_BROWSER_EXECUTABLE_PATH already configured"

@@ -124,7 +124,7 @@ function Write-BrowserEnv {
 }
 
 function Install-AgentBrowser {
-    param([string]$BrowserDir, [string]$NpmExe, [string]$LogPrefix)
+    param([string]$BrowserDir, [string]$NpmExe, [string]$LogPrefix, [switch]$SkipPlaywright)
 
     if (-not (Test-Path $BrowserDir)) {
         New-Item -ItemType Directory -Force -Path $BrowserDir | Out-Null
@@ -147,19 +147,21 @@ function Install-AgentBrowser {
         }
 
         $npxExe = Resolve-NpxCmd -NpmExe $NpmExe
-        if ($npxExe) {
-            Write-Info "Installing Playwright Chromium..."
-            $pwLog = "$env:TEMP\hermes-$LogPrefix-playwright-$(Get-Random).log"
-            & $npxExe playwright install chromium *> $pwLog
-            if ($LASTEXITCODE -eq 0) {
-                Write-Success "Playwright Chromium installed"
-                Remove-Item -Force $pwLog -ErrorAction SilentlyContinue
+        if (-not $SkipPlaywright) {
+            if ($npxExe) {
+                Write-Info "Installing Playwright Chromium..."
+                $pwLog = "$env:TEMP\hermes-$LogPrefix-playwright-$(Get-Random).log"
+                & $npxExe playwright install chromium *> $pwLog
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Success "Playwright Chromium installed"
+                    Remove-Item -Force $pwLog -ErrorAction SilentlyContinue
+                } else {
+                    Write-Warn "Playwright Chromium install failed (exit $LASTEXITCODE) — see $pwLog"
+                }
             } else {
-                Write-Warn "Playwright Chromium install failed (exit $LASTEXITCODE) — see $pwLog"
+                Write-Warn "npx not found — skipping Playwright Chromium install."
+                Write-Info "Run manually: npx playwright install chromium"
             }
-        } else {
-            Write-Warn "npx not found — skipping Playwright Chromium install."
-            Write-Info "Run manually: npx playwright install chromium"
         }
     } catch {
         Write-Warn "browser install error: $_"
@@ -1658,10 +1660,12 @@ function Invoke-EnsureMode {
                 if ($script:HasNode) {
                     # Check for system browser first — skip Playwright download if found
                     $systemBrowser = Find-SystemBrowser
+                    $skipPw = $false
                     if ($systemBrowser) {
                         Write-Success "System browser found: $systemBrowser"
                         Write-Info "Skipping Playwright Chromium download."
                         Write-BrowserEnv -BrowserPath $systemBrowser
+                        $skipPw = $true
                     }
 
                     $npmExe = Resolve-NpmCmd
@@ -1670,7 +1674,11 @@ function Invoke-EnsureMode {
                         break
                     }
 
-                    Install-AgentBrowser -BrowserDir "$HermesHome\agent-browser" -NpmExe $npmExe -LogPrefix "ensure"
+                    if ($skipPw) {
+                        Install-AgentBrowser -BrowserDir "$HermesHome\agent-browser" -NpmExe $npmExe -LogPrefix "ensure" -SkipPlaywright
+                    } else {
+                        Install-AgentBrowser -BrowserDir "$HermesHome\agent-browser" -NpmExe $npmExe -LogPrefix "ensure"
+                    }
                 }
             }
             "ripgrep" {
@@ -1707,15 +1715,21 @@ function Invoke-PostInstallMode {
     if ($script:HasNode) {
         # Check for system browser first — skip Playwright download if found
         $systemBrowser = Find-SystemBrowser
+        $skipPw = $false
         if ($systemBrowser) {
             Write-Success "System browser found: $systemBrowser"
             Write-Info "Skipping Playwright Chromium download."
             Write-BrowserEnv -BrowserPath $systemBrowser
+            $skipPw = $true
         }
 
         $npmExe = Resolve-NpmCmd
         if ($npmExe) {
-            Install-AgentBrowser -BrowserDir "$HermesHome\agent-browser" -NpmExe $npmExe -LogPrefix "postinstall"
+            if ($skipPw) {
+                Install-AgentBrowser -BrowserDir "$HermesHome\agent-browser" -NpmExe $npmExe -LogPrefix "postinstall" -SkipPlaywright
+            } else {
+                Install-AgentBrowser -BrowserDir "$HermesHome\agent-browser" -NpmExe $npmExe -LogPrefix "postinstall"
+            }
         } else {
             Write-Warn "npm not found — skipping browser tools install."
         }
