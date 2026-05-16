@@ -33,7 +33,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,214 @@ _JUDGE_RESPONSE_SNIPPET_CHARS = 4000
 # exhausted with every reply shaped like `judge returned empty response` or
 # `judge reply was not JSON`.
 DEFAULT_MAX_CONSECUTIVE_PARSE_FAILURES = 3
+
+# ── Phase 1: CI Override constants ────────────────────────────────────────
+CI_MAX_RETRIES = 5
+CI_TIME_LIMIT_SECONDS = 3600  # 1 hour
+
+
+# ── Phase 1: Goal metadata directory helpers ──────────────────────────────
+
+def _get_goals_base_dir() -> str:
+    """Return ~/.hermes/goals/"""
+    try:
+        from hermes_constants import get_hermes_home
+        return str(get_hermes_home() / "goals")
+    except Exception:
+        import os
+        return os.path.expanduser("~/.hermes/goals")
+
+
+def _ensure_goal_dir(goal_id: str) -> "Path":
+    """Create and return the metadata directory for a goal."""
+    import pathlib
+    d = pathlib.Path(_get_goals_base_dir()) / goal_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def init_goal_metadata(goal_id: str, goal_text: str) -> dict:
+    """Create the goal metadata directory with all required files.
+
+    Returns dict of file paths.
+    """
+    import pathlib
+    from datetime import datetime
+
+    ts = datetime.now().isoformat()
+    d = _ensure_goal_dir(goal_id)
+
+    files = {}
+
+    # goal.md — the original goal text
+    f = d / "goal.md"
+    f.write_text(f"# Goal\n\n{goal_text}\n")
+    files["goal"] = str(f)
+
+    # phases.md — execution phases
+    f = d / "phases.md"
+    f.write_text(f"## Phases\n\n0. Planning\n")
+    files["phases"] = str(f)
+
+    # signals.md — completion signals from skills/hooks
+    f = d / "signals.md"
+    f.write_text(f"## Signals\n\n- [{ts}] goal_created: true\n")
+    files["signals"] = str(f)
+
+    # context.md — execution context for judge
+    f = d / "context.md"
+    f.write_text("## Context\n\n")
+    files["context"] = str(f)
+
+    # plan.md — the generated plan
+    f = d / "plan.md"
+    f.write_text("## Plan\n\n_Pending_ — plan not yet generated.\n")
+    files["plan"] = str(f)
+
+    # events.log — lifecycle events
+    f = d / "events.log"
+    f.write_text(f"[{ts}] goal_created\n")
+    files["events"] = str(f)
+
+    return files
+
+
+# ── Phase 1: Signal-writing helpers ────────────────────────────────────────
+
+def write_signal(goal_id: str, signal_type: str, value: str, metadata: dict = None):
+    """Append a signal to ~/.hermes/goals/<goal_id>/signals.md"""
+    try:
+        import pathlib
+        from datetime import datetime
+
+        goal_dir = pathlib.Path(_get_goals_base_dir()) / goal_id
+        if not goal_dir.exists():
+            return
+
+        ts = datetime.now().isoformat()
+        entry = f"- [{ts}] {signal_type}: {value}"
+        if metadata:
+            import json as _json
+            entry += f" | {_json.dumps(metadata)}"
+
+        signals_file = goal_dir / "signals.md"
+        with open(signals_file, "a") as fh:
+            fh.write(entry + "\n")
+
+        events_file = goal_dir / "events.log"
+        with open(events_file, "a") as fh:
+            fh.write(f"[{ts}] signal:{signal_type}={value}\n")
+    except Exception:
+        pass  # fail silent — signals are best-effort
+
+
+def write_context(goal_id: str, phase: int, action: str, result: str):
+    """Append to context.md so the judge sees execution history."""
+    try:
+        import pathlib
+        from datetime import datetime
+
+        goal_dir = pathlib.Path(_get_goals_base_dir()) / goal_id
+        if not goal_dir.exists():
+            return
+
+        ts = datetime.now().isoformat()
+        entry = f"\n## Phase {phase}: {action}\n[{ts}] {result}\n"
+
+        ctx_file = goal_dir / "context.md"
+        with open(ctx_file, "a") as fh:
+            fh.write(entry)
+    except Exception:
+        pass
+
+
+def read_signals(goal_id: str) -> str:
+    """Read signals.md for the judge."""
+    try:
+        import pathlib
+        f = pathlib.Path(_get_goals_base_dir()) / goal_id / "signals.md"
+        if f.exists():
+            return f.read_text()
+    except Exception:
+        pass
+    return "(no signals yet)"
+
+
+def read_context(goal_id: str) -> str:
+    """Read context.md for the judge."""
+    try:
+        import pathlib
+        f = pathlib.Path(_get_goals_base_dir()) / goal_id / "context.md"
+        if f.exists():
+            return f.read_text()
+    except Exception:
+        pass
+    return "(no context yet)"
+
+
+# ── Phase 1: CI Override ───────────────────────────────────────────────────
+
+def check_council_approval(goal_id: str) -> bool:
+    """Check if council has approved via signals.md."""
+    signals = read_signals(goal_id)
+    return "council_approved: true" in signals or "pr_approved: true" in signals
+
+
+def check_ci_override(state: "GoalState") -> tuple:
+    """Returns (can_override, reason) for CI failure override.
+
+    Policy: CI fails → retry up to 5 times → after 1hr wall → council approval overrides.
+    """
+    if state.ci_retries < CI_MAX_RETRIES:
+        return False, f"CI retriable ({state.ci_retries}/{CI_MAX_RETRIES})"
+
+    elapsed = time.time() - state.ci_first_failure_at
+    if elapsed < CI_TIME_LIMIT_SECONDS:
+        remaining = CI_TIME_LIMIT_SECONDS - elapsed
+        return False, f"CI time limit not reached ({int(elapsed)}s elapsed, {int(remaining)}s remaining)"
+
+    if check_council_approval(state.metadata_dir.split("/")[-1] if state.metadata_dir else ""):
+        return True, "CI failed after retries + time limit; council approved"
+
+    return False, "CI failed but no council approval"
+
+
+# ── Phase 1: WBS helpers ───────────────────────────────────────────────────
+
+WBS_LEVELS = {
+    1: "Goal",
+    2: "Phase",
+    3: "Work Package",
+    4: "Task",
+    5: "Sub-task",
+}
+
+DEP_TYPES = {
+    "SS": "Start-to-Start",
+    "SF": "Start-to-Finish",
+    "FS": "Finish-to-Start",
+    "FF": "Finish-to-Finish",
+}
+
+
+def wbs_number(parent: str, index: int, level: int) -> str:
+    """Generate WBS number e.g. 1.1.1.1"""
+    if level == 1:
+        return str(index)
+    return f"{parent}.{index}"
+
+
+def advance_phase(state: "GoalState") -> "GoalState":
+    """Advance to the next phase and log it."""
+    if state.phase < state.max_phases:
+        state.phase += 1
+        write_signal(
+            state.metadata_dir.split("/")[-1] if state.metadata_dir else "",
+            "phase_advanced",
+            f"phase_{state.phase}",
+            {"max_phases": state.max_phases}
+        )
+    return state
 
 
 CONTINUATION_PROMPT_TEMPLATE = (
@@ -109,6 +317,33 @@ class GoalState:
     paused_reason: Optional[str] = None       # why we auto-paused (budget, etc.)
     consecutive_parse_failures: int = 0       # judge-output parse failures in a row
 
+    # ── Phase 1 enhancements ──────────────────────────────────────────────
+    # Goal-family fields (all optional for backward compat)
+    goal_type: str = "base"                    # base | plan | execute
+    metadata_dir: str = ""                     # ~/.hermes/goals/<goal_id>/
+    symphony_task_id: str = ""                  # Nexus task ID
+    wbs_level: int = 1                          # WBS level (1=goal, 2=phase, 3=work pkg, 4=task)
+    parent_task_id: str = ""                   # parent Symphony task for sub-tasks
+    ci_override_allowed: bool = True          # council override on CI failure
+    ci_retries: int = 0                        # current retry count
+    ci_first_failure_at: float = 0.0          # timestamp of first CI failure
+    signals_path: str = ""                      # path to signals.md
+    context_path: str = ""                      # path to context.md
+    plan_path: str = ""                         # path to plan.md
+    phase: int = 0                              # current execution phase (0=planning)
+    max_phases: int = 0
+    agent_pool: list = field(default_factory=list)
+    model_pool: list = field(default_factory=list)
+    created_subtasks: list = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.agent_pool is None:
+            self.agent_pool = []
+        if self.model_pool is None:
+            self.model_pool = []
+        if self.created_subtasks is None:
+            self.created_subtasks = []
+
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
 
@@ -126,6 +361,23 @@ class GoalState:
             last_reason=data.get("last_reason"),
             paused_reason=data.get("paused_reason"),
             consecutive_parse_failures=int(data.get("consecutive_parse_failures", 0) or 0),
+            # Phase 1 fields
+            goal_type=data.get("goal_type", "base"),
+            metadata_dir=data.get("metadata_dir", ""),
+            symphony_task_id=data.get("symphony_task_id", ""),
+            wbs_level=int(data.get("wbs_level", 1) or 1),
+            parent_task_id=data.get("parent_task_id", ""),
+            ci_override_allowed=bool(data.get("ci_override_allowed", True)),
+            ci_retries=int(data.get("ci_retries", 0) or 0),
+            ci_first_failure_at=float(data.get("ci_first_failure_at", 0.0) or 0.0),
+            signals_path=data.get("signals_path", ""),
+            context_path=data.get("context_path", ""),
+            plan_path=data.get("plan_path", ""),
+            phase=int(data.get("phase", 0) or 0),
+            max_phases=int(data.get("max_phases", 0) or 0),
+            agent_pool=data.get("agent_pool") or [],
+            model_pool=data.get("model_pool") or [],
+            created_subtasks=data.get("created_subtasks") or [],
         )
 
 
@@ -283,6 +535,7 @@ def judge_goal(
     goal: str,
     last_response: str,
     *,
+    goal_id: str = "",
     timeout: float = DEFAULT_JUDGE_TIMEOUT,
 ) -> Tuple[str, str, bool]:
     """Ask the auxiliary model whether the goal is satisfied.
@@ -299,6 +552,10 @@ def judge_goal(
     This is deliberately fail-open: any error returns ``("continue", "...", False)``
     so a broken judge doesn't wedge progress — the turn budget and the
     consecutive-parse-failures auto-pause are the backstops.
+
+    Phase 1 enhancement: if goal_id is provided, reads signals.md + context.md
+    from ~/.hermes/goals/<goal_id>/ and enriches the judge prompt with observable
+    completion signals (CI results, council approvals, phase status).
     """
     if not goal.strip():
         return "skipped", "empty goal", False
@@ -321,9 +578,23 @@ def judge_goal(
     if client is None or not model:
         return "continue", "no auxiliary client configured", False
 
+    # ── Phase 1: enrich judge prompt with signals ──────────────────────
+    enriched_response = last_response
+
+    if goal_id:
+        try:
+            signals_text = read_signals(goal_id)
+            context_text = read_context(goal_id)
+            if signals_text and signals_text != "(no signals yet)":
+                enriched_response += "\n\n--- Observable Signals ---\n" + signals_text
+            if context_text and context_text != "(no context yet)":
+                enriched_response += "\n\n--- Execution Context ---\n" + context_text
+        except Exception:
+            pass  # fail silent — judge continues with text only
+
     prompt = JUDGE_USER_PROMPT_TEMPLATE.format(
         goal=_truncate(goal, 2000),
-        response=_truncate(last_response, _JUDGE_RESPONSE_SNIPPET_CHARS),
+        response=_truncate(enriched_response, _JUDGE_RESPONSE_SNIPPET_CHARS),
     )
 
     try:
@@ -408,17 +679,32 @@ class GoalManager:
 
     # --- mutation -----------------------------------------------------
 
-    def set(self, goal: str, *, max_turns: Optional[int] = None) -> GoalState:
+    def set(self, goal: str, *, max_turns: Optional[int] = None, goal_type: str = "base") -> GoalState:
         goal = (goal or "").strip()
         if not goal:
             raise ValueError("goal text is empty")
+
+        # Generate a goal_id for the metadata directory
+        import hashlib
+        import time as _time
+        goal_id = hashlib.sha256(f"{goal[:100]}{_time.time()}".encode()).hexdigest()[:12]
+
+        # Initialize metadata directory with all required files
+        meta_files = init_goal_metadata(goal_id, goal)
+
         state = GoalState(
             goal=goal,
             status="active",
             turns_used=0,
             max_turns=int(max_turns) if max_turns else self.default_max_turns,
-            created_at=time.time(),
+            created_at=_time.time(),
             last_turn_at=0.0,
+            # Phase 1 fields
+            goal_type=goal_type,
+            metadata_dir=meta_files["signals"].replace("/signals.md", ""),
+            signals_path=meta_files["signals"],
+            context_path=meta_files["context"],
+            plan_path=meta_files["plan"],
         )
         self._state = state
         save_goal(self.session_id, state)
@@ -494,7 +780,10 @@ class GoalManager:
         state.turns_used += 1
         state.last_turn_at = time.time()
 
-        verdict, reason, parse_failed = judge_goal(state.goal, last_response)
+        verdict, reason, parse_failed = judge_goal(
+            state.goal, last_response,
+            goal_id=state.metadata_dir.split("/")[-1] if state.metadata_dir else "",
+        )
         state.last_verdict = verdict
         state.last_reason = reason
 
@@ -587,8 +876,20 @@ __all__ = [
     "GoalManager",
     "CONTINUATION_PROMPT_TEMPLATE",
     "DEFAULT_MAX_TURNS",
+    "CI_MAX_RETRIES",
+    "CI_TIME_LIMIT_SECONDS",
+    "WBS_LEVELS",
+    "DEP_TYPES",
     "load_goal",
     "save_goal",
     "clear_goal",
     "judge_goal",
+    "init_goal_metadata",
+    "write_signal",
+    "write_context",
+    "read_signals",
+    "read_context",
+    "check_ci_override",
+    "wbs_number",
+    "advance_phase",
 ]
