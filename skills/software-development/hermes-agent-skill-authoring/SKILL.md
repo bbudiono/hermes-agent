@@ -169,13 +169,20 @@ Pick the closest existing category. Don't invent new top-level categories casual
 **A. Register the skill** in `~/.claude/registry_skills.md` BEFORE the skill goes live:
 - Add entry under the appropriate section with: name, path, description, triggers, use cases
 - Entry must appear in the registry before any agent can discover or invoke the skill
+- Update the "Path" to `~/.agents/skills/<category>/<name>/SKILL.md` (ecosystem canonical)
 
-**B. Propagate to Mac Mini** via git push:
+**B. Place in `~/.agents/skills/`** (ecosystem canonical, NOT `~/.hermes/skills/`):
 ```bash
-cd ~/.hermes/hermes-agent && git add skills/<category>/<name>/ && git commit -m "skill: add <name>" && git push
+mkdir -p ~/.agents/skills/<category>/<name>/
+cp <skill>/SKILL.md ~/.agents/skills/<category>/<name>/
+mkdir -p ~/.agents/skills/<category>/<name>/references/
+cp -r <skill>/references/* ~/.agents/skills/<category>/<name>/references/ 2>/dev/null
 ```
-- Skills live in `~/.hermes/skills/` (user-local, not git-tracked)
-- In-repo skills are in `~/.hermes/hermes-agent/skills/` (git-tracked, shipped with hermes-agent)
-- Always push in-repo skill changes to git so Mac Mini pulls them
+Then SCP to MBP: `scp -r ~/.agents/skills/<category>/<name> bernie-macbookpro-m4:~/.agents/skills/<category>/`
 
-**Why this matters:** A skill that isn't registered is invisible to the ecosystem. A skill that isn't propagated to the Mini is only available on this machine. Both steps are required for every skill creation or enhancement — no exceptions.
+**For hermes-agent in-repo skills** (shipped with the package):
+- Path: `~/.hermes/hermes-agent/skills/<category>/<name>/SKILL.md`
+- Commit + push: `cd ~/.hermes/hermes-agent && git add skills/... && git commit -m "skill: add <name>" && git push`
+- These ship with hermes-agent and are NOT ecosystem skills
+
+**Why this matters:** Ecosystem skills belong in `~/.agents/skills/` (git-tracked canonical store), visible to ALL agents across all providers. Skills in `~/.hermes/skills/` are user-local only. Both A (register) and B (place in `.agents/`) are required for every skill creation or enhancement — no exceptions.
