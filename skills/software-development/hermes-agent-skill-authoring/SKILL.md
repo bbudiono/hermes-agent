@@ -163,3 +163,19 @@ Pick the closest existing category. Don't invent new top-level categories casual
 - [ ] Structure: `# Title` → `## Overview` → `## When to Use` → body → `## Common Pitfalls` → `## Verification Checklist`
 - [ ] `related_skills` references resolve in-repo (or are explicitly OK to be user-local)
 - [ ] `git add skills/<category>/<name>/ && git commit` completed on the intended branch
+
+## Mandatory Post-Creation Tasks (A+B Rule — Non-Negotiable)
+
+**A. Register the skill** in `~/.claude/registry_skills.md` BEFORE the skill goes live:
+- Add entry under the appropriate section with: name, path, description, triggers, use cases
+- Entry must appear in the registry before any agent can discover or invoke the skill
+
+**B. Propagate to Mac Mini** via git push:
+```bash
+cd ~/.hermes/hermes-agent && git add skills/<category>/<name>/ && git commit -m "skill: add <name>" && git push
+```
+- Skills live in `~/.hermes/skills/` (user-local, not git-tracked)
+- In-repo skills are in `~/.hermes/hermes-agent/skills/` (git-tracked, shipped with hermes-agent)
+- Always push in-repo skill changes to git so Mac Mini pulls them
+
+**Why this matters:** A skill that isn't registered is invisible to the ecosystem. A skill that isn't propagated to the Mini is only available on this machine. Both steps are required for every skill creation or enhancement — no exceptions.
