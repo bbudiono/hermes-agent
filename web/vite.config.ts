@@ -5,6 +5,46 @@ import path from "path";
 
 const BACKEND = process.env.HERMES_DASHBOARD_URL ?? "http://127.0.0.1:9119";
 
+function manualChunks(id: string): string | undefined {
+  const normalized = id.split(path.sep).join("/");
+
+  if (normalized.includes("/node_modules/")) {
+    if (normalized.includes("/@xterm/") || normalized.includes("/xterm")) {
+      return "vendor-xterm";
+    }
+    if (
+      normalized.includes("/react/") ||
+      normalized.includes("/react-dom/") ||
+      normalized.includes("/react-router-dom/")
+    ) {
+      return "vendor-react";
+    }
+    if (normalized.includes("/@nous-research/ui/")) {
+      return "vendor-noui";
+    }
+    if (
+      normalized.includes("/lucide-react/") ||
+      normalized.includes("/motion/") ||
+      normalized.includes("/gsap/") ||
+      normalized.includes("/three/") ||
+      normalized.includes("/@react-three/") ||
+      normalized.includes("/leva/") ||
+      normalized.includes("/@observablehq/plot/")
+    ) {
+      return "vendor-visual";
+    }
+  }
+
+  if (normalized.includes("/src/pages/")) {
+    return "app-pages";
+  }
+  if (normalized.includes("/src/components/")) {
+    return "app-components";
+  }
+
+  return undefined;
+}
+
 /**
  * In production the Python `hermes dashboard` server injects a one-shot
  * session token into `index.html` (see `hermes_cli/web_server.py`). The
@@ -92,6 +132,11 @@ export default defineConfig({
   build: {
     outDir: "../hermes_cli/web_dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks,
+      },
+    },
   },
   server: {
     proxy: {

@@ -9,9 +9,34 @@ Instructions for AI coding assistants and developers working on the hermes-agent
 source .venv/bin/activate   # or: source venv/bin/activate
 ```
 
+### Bernhard ecosystem override
+
+- Anthropic agent SDKs is forbidden in this ecosystem.
+- Claude print mode / `claude --print` is forbidden in skills, hooks, scripts, implementations, and code.
+- Claude models may only be invoked through the Claude CLI itself, not through programmatic Anthropic API calls, SDK wrappers, or print-mode subprocess automation.
+- Treat May 2026 Claude Max pricing as separate from API billing: programmatic Anthropic API calls still consume credits/billing and must not be assumed covered by Max.
+
 `scripts/run_tests.sh` probes `.venv` first, then `venv`, then
 `$HOME/.hermes/hermes-agent/venv` (for worktrees that share a venv with the
 main checkout).
+
+## Constitutional Rules (Bernhard workspace)
+
+These are hard constraints for contributors, skills, and automation in this
+workspace:
+
+- **Do not use the Anthropic agent SDKs.**
+- **Do not use Claude print mode** in skills, implementation examples, scripts, or
+  automation.
+- **Claude invocation must stay on the Claude CLI** (typically interactive
+  `claude` sessions, often orchestrated via `tmux`).
+- **Treat `ANTHROPIC_API_KEY` / Console billing as separate from Claude Max
+  subscription usage.** If the goal is Max-plan-backed CLI usage, avoid
+  accidental API-key auth and do not assume API traffic consumes Max credits.
+- **Before moving any plan from active to closed/completed/archived, run a
+  codebase review** that checks for obvious bugs, larger-codebase anomalies,
+  unforeseen implementation issues, and duplicate or unclean code. The plan
+  closure must reflect that review.
 
 ## Project Structure
 
@@ -65,6 +90,23 @@ hermes-agent/
 **Logs:** `~/.hermes/logs/` — `agent.log` (INFO+), `errors.log` (WARNING+),
 `gateway.log` when running the gateway. Profile-aware via `get_hermes_home()`.
 Browse with `hermes logs [--follow] [--level ...] [--session ...]`.
+
+## Constitutional policy — Claude surfaces (Bernhard, May 2026)
+
+When working in Bernhard's ecosystem, treat the following as hard rules:
+
+- **Do not use the Anthropic agent SDKs** in skills, code, scripts, or examples.
+- **Do not use Claude print mode** in skills, code, scripts, or examples.
+- **Do not route Claude execution through direct Anthropic API calls** (`api.anthropic.com`) for ecosystem workflows.
+- **Do not authenticate Claude Code with `ANTHROPIC_API_KEY`** for ecosystem workflows.
+- **Invoke Claude models only through the interactive Claude CLI** (`claude`) under PTY/tmux orchestration.
+
+Billing/usage rationale to remember:
+
+- Claude Pro/Max subscription usage in Claude Code is shared with Claude app surfaces.
+- If `ANTHROPIC_API_KEY` is present, Claude Code can switch to Console/API billing instead of subscription allocation.
+- Optional API credits / pay-as-you-go continuation are a separate billing surface billed at standard API rates.
+- To stay within Pro/Max subscription allocation, decline API-credit prompts and avoid Console/API credentials.
 
 ## File Dependency Chain
 
@@ -683,7 +725,16 @@ violate them.
    stdlib + pytest + `unittest.mock`. No live network calls. Run via
    `scripts/run_tests.sh tests/skills/test_<skill>_skill.py -q`.
 
-8. **`.env.example` additions are isolated to a clearly delimited
+8. **Claude-family integrations in Bernhard-style ecosystems are CLI-only.**
+   Do not add Anthropic agent SDKs examples, direct Anthropic API helper
+   flows, or Claude one-shot print-mode command patterns to SKILL.md files,
+   implementation docs, or sample code when the target environment follows
+   Bernhard's constitutional rules. If Claude billing or auth is mentioned,
+   document the May 2026 behavior explicitly: programmatic usage consumes
+   purchased Claude Max extra/overage credits or separate API billing, not
+   the base Max allowance.
+
+9. **`.env.example` additions are isolated to a clearly delimited
    block.** Don't touch the surrounding file — contributor-supplied
    `.env.example` versions are usually stale and edits outside the
    skill's own block must be dropped during salvage.

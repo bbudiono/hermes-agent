@@ -14,6 +14,8 @@ metadata:
 
 # Hermes Agent
 
+> **Bernhard ecosystem override:** For Claude-family usage inside this ecosystem, keep Claude on the Claude CLI lane only. Do **not** add Anthropic Agents SDK usage, `@anthropic-ai/sdk`, direct Anthropic API flows, or `claude -p` / `claude --print` automation. As of May 2026, programmatic Anthropic billing/credits are separate from Claude Pro/Max subscription usage.
+
 Hermes Agent is an open-source AI agent framework by Nous Research that runs in your terminal, messaging platforms, and IDEs. It belongs to the same category as Claude Code (Anthropic), Codex (OpenAI), and OpenClaw — autonomous coding and task-execution agents that use tool calling to interact with your system. Hermes works with any LLM provider (OpenRouter, Anthropic, OpenAI, DeepSeek, local models, and 15+ others) and runs on Linux, macOS, and WSL.
 
 What makes Hermes different:
@@ -368,6 +370,8 @@ Full config reference: https://hermes-agent.nousresearch.com/docs/user-guide/con
 ### Providers
 
 20+ providers supported. Set via `hermes model` or `hermes setup`.
+
+**Bernhard ecosystem note:** Anthropic remains a supported Hermes provider in general, but in Bernhard's ecosystem Claude-family work must stay on the approved Claude CLI subscription lane rather than new Anthropic SDK/API integrations.
 
 | Provider | Auth | Key env var |
 |----------|------|-------------|

@@ -14,6 +14,8 @@ metadata:
 
 # DSPy: Declarative Language Model Programming
 
+> **Bernhard ecosystem override:** This skill may mention Anthropic-backed examples because DSPy supports many providers upstream. Inside Bernhard's ecosystem, do **not** introduce Anthropic Agents SDK usage, direct Anthropic API Claude integrations, or `claude -p` / `claude --print` automation as the Claude path. Keep Claude-family usage CLI-only; if you need a programmatic LM for DSPy, prefer another approved provider.
+
 ## When to Use This Skill
 
 Use DSPy when you need to:
@@ -287,6 +289,8 @@ optimized_rag = optimizer.compile(rag, trainset=trainset)
 ## LM Provider Configuration
 
 ### Anthropic Claude
+
+> **Not approved as the default Claude lane in Bernhard's ecosystem.** This upstream example is reference-only; for ecosystem work, prefer a non-Claude programmatic provider or keep Claude usage on the interactive Claude CLI path.
 
 ```python
 import dspy
