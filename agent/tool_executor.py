@@ -51,6 +51,36 @@ from tools.budget_config import BudgetConfig, DEFAULT_BUDGET, budget_for_context
 logger = logging.getLogger(__name__)
 
 
+
+def _hook_args_with_terminal_cwd(function_name, function_args, task_id):
+    """Return hook-facing args, enriched with the terminal session's effective
+    cwd when the model omitted workdir (repo_ecosystem_agents#700).
+
+    Security plugins (consent-boundary's script-file email lane) resolve
+    RELATIVE script paths against args cwd/workdir; the live session cwd is
+    tracked in the terminal environment (``env.cwd``), not the model args, so
+    without this the lane never sees it. A COPY is returned — the execution
+    args are never mutated (an unexpected ``cwd`` key must not reach the tool).
+    Best-effort: any failure returns the original args unchanged.
+    """
+    if function_name != "terminal" or not isinstance(function_args, dict):
+        return function_args
+    if function_args.get("workdir") or function_args.get("cwd"):
+        return function_args
+    try:
+        from tools.terminal_tool import get_active_env
+
+        env = get_active_env(task_id)
+        live = getattr(env, "cwd", None)
+        if isinstance(live, str) and live.strip():
+            enriched = dict(function_args)
+            enriched["cwd"] = live
+            return enriched
+    except Exception:
+        pass
+    return function_args
+
+
 def _budget_for_agent(agent) -> BudgetConfig:
     """Resolve a tool-result BudgetConfig scaled to the agent's context window.
 
@@ -418,7 +448,8 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                 from hermes_cli.plugins import get_pre_tool_call_block_message
                 block_message = get_pre_tool_call_block_message(
                     function_name,
-                    function_args,
+                    _hook_args_with_terminal_cwd(
+                        function_name, function_args, effective_task_id or ""),
                     task_id=effective_task_id or "",
                     session_id=getattr(agent, "session_id", "") or "",
                     tool_call_id=getattr(tool_call, "id", "") or "",
