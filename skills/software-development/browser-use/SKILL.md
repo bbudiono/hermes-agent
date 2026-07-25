@@ -11,6 +11,16 @@ install: pip install browser-use
 
 # Browser Use
 
+## Install
+
+```bash
+pip install browser-use
+```
+
+**Requirements:** Python 3.10+, Chrome/Chromium installed (`brew install chromium` or download from google.com/chrome)
+
+---
+
 Browser Use lets an AI agent use a web browser the same way a human does — it opens pages, clicks buttons, types, and fills forms. You describe the task in natural language, and it completes it autonomously.
 
 **Key stats:** 9.5M downloads/week, 105K GitHub stars

@@ -10,6 +10,22 @@ source: ~/.agents/scripts/fleet_ssh_mesh.sh
 
 # Tailscale Fleet SSH Mesh
 
+## Install
+
+The `fleet_ssh_mesh.sh` script is embedded in `references/`. It already exists at `~/.agents/scripts/fleet_ssh_mesh.sh` on all fleet devices.
+
+```bash
+# Verify mesh health (read-only)
+bash ~/.agents/scripts/fleet_ssh_mesh.sh --verify-only
+
+# Full repair (idempotent)
+bash ~/.agents/scripts/fleet_ssh_mesh.sh
+```
+
+**Requirements:** Tailscale installed + authenticated on all devices. The script handles key generation and MagicDNS resolver setup automatically.
+
+---
+
 Idempotent SSH mesh that gives every fleet Mac (and Hermes' host) passwordless SSH to every other fleet device via Tailscale MagicDNS.
 
 **Fleet topology:**

@@ -11,6 +11,19 @@ install: pip install crawl4ai
 
 # Crawl4AI
 
+## Install
+
+```bash
+pip install crawl4ai
+```
+
+Or with Docker:
+```bash
+docker pull unclecode/crawl4ai
+```
+
+---
+
 Crawl4AI is an open-source LLM-friendly web crawler and scraper. It converts any website into clean, structured data ready for AI models — handles JavaScript-heavy pages that most scrapers struggle with.
 
 **Key stats:** 67.8K GitHub stars, 2M downloads/month
