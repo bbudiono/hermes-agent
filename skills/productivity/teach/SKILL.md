@@ -5,6 +5,18 @@ disable-model-invocation: true
 argument-hint: "What would you like to learn about?"
 ---
 
+## Install
+
+No installation required — this is a prompt-based skill. Load via:
+
+```
+skill_view("productivity/teach")
+```
+
+Source: https://github.com/mattpocock/skills/blob/main/skills/productivity/teach/SKILL.md
+
+---
+
 The user has asked you to teach them something. This is a stateful request - they intend to learn the topic over multiple sessions.
 
 ## Teaching Workspace
