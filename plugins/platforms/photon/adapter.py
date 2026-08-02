@@ -91,6 +91,24 @@ _SIDECAR_DIR = Path(__file__).parent / "sidecar"
 # connect path indefinitely.
 _NPM_REINSTALL_TIMEOUT = 600
 
+# Sidecar readiness window. Healthy baseline startup is ~3s, but the node
+# process's module import + top-level Spectrum init stretches well past 15s
+# when the host is under load (observed at loadavg 25+ on 2026-08-02, where
+# the old hardcoded 15s window failed every reconnect attempt).
+_DEFAULT_SIDECAR_READY_TIMEOUT = 60.0
+
+
+def _sidecar_ready_timeout() -> float:
+    """Readiness window in seconds; PHOTON_SIDECAR_READY_TIMEOUT overrides."""
+    raw = os.environ.get("PHOTON_SIDECAR_READY_TIMEOUT", "")
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_SIDECAR_READY_TIMEOUT
+    if value <= 0:
+        return _DEFAULT_SIDECAR_READY_TIMEOUT
+    return value
+
 # Photon / Envoy / spectrum-ts error substrings that indicate a transient
 # upstream overload rather than a permanent failure.  These are not in the
 # core _RETRYABLE_ERROR_PATTERNS because they are specific to this adapter.
@@ -981,8 +999,10 @@ class PhotonAdapter(BasePlatformAdapter):
             self._supervise_sidecar(self._sidecar_proc)
         )
 
-        # Wait for /healthz to come up — give it up to 15s on cold start.
-        deadline = time.time() + 15.0
+        # Wait for /healthz to come up. Env-configurable: the sidecar's
+        # cold start is ~3s idle but scales with host load.
+        ready_timeout = _sidecar_ready_timeout()
+        deadline = time.time() + ready_timeout
         last_err: Optional[Exception] = None
         async with httpx.AsyncClient(timeout=2.0) as client:
             while time.time() < deadline:
@@ -1002,7 +1022,8 @@ class PhotonAdapter(BasePlatformAdapter):
                     last_err = e
                 await asyncio.sleep(0.2)
         raise RuntimeError(
-            f"Photon sidecar did not become ready within 15s: {last_err}"
+            f"Photon sidecar did not become ready within "
+            f"{ready_timeout:.0f}s: {last_err}"
         )
 
     async def _supervise_sidecar(self, proc: subprocess.Popen) -> None:

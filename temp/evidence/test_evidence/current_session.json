@@ -1,0 +1,50 @@
+{
+  "session_start": "2026-08-02T04:41:59.281025+00:00",
+  "runs": [
+    {
+      "timestamp": "2026-08-02T04:41:59.282179+00:00",
+      "command": "cd ~/Temp/worktrees/claude/hermes-agent/fix-photon-sidecar-resilience && python3 -m pytest tests/gateway/test_reconnect_watcher_resilience.py tests/plugins/platforms/photon/test_sidecar_ready_timeout.py -x -q 2>&1 | tail -15",
+      "cwd": "/Users/bernhardbudiono/Temp/worktrees/claude/hermes-agent/fix-photon-sidecar-resilience",
+      "exit_code": -1,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0,
+      "scope": "partial",
+      "type": "test"
+    },
+    {
+      "timestamp": "2026-08-02T04:46:15.521219+00:00",
+      "command": "cd ~/Temp/worktrees/claude/hermes-agent/fix-photon-sidecar-resilience && python3 -m pytest tests/gateway/test_reconnect_watcher_resilience.py tests/plugins/platforms/photon/test_sidecar_ready_timeout.py -q 2>&1 | tail -8",
+      "cwd": "/Users/bernhardbudiono/Temp/worktrees/claude/hermes-agent/fix-photon-sidecar-resilience",
+      "exit_code": -1,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0,
+      "scope": "partial",
+      "type": "test"
+    },
+    {
+      "timestamp": "2026-08-02T04:46:51.301811+00:00",
+      "command": "cd ~/Temp/worktrees/claude/hermes-agent/fix-photon-sidecar-resilience && python3 -m pytest tests/plugins/platforms/photon/ -q 2>&1 | tail -3; grep -rln \"reconnect\\|_failed_platforms\" tests/gateway --include=\"*.py\" | head -8",
+      "cwd": "/Users/bernhardbudiono/Temp/worktrees/claude/hermes-agent/fix-photon-sidecar-resilience",
+      "exit_code": -1,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0,
+      "scope": "full",
+      "type": "test"
+    },
+    {
+      "timestamp": "2026-08-02T04:47:08.350017+00:00",
+      "command": "cd ~/Temp/worktrees/claude/hermes-agent/fix-photon-sidecar-resilience && python3 -m pytest tests/gateway/test_platform_reconnect_fd_leak.py tests/gateway/test_discord_connect.py tests/plugins/test_discord_runtime_failure.py -q 2>&1 | tail -4",
+      "cwd": "/Users/bernhardbudiono/Temp/worktrees/claude/hermes-agent/fix-photon-sidecar-resilience",
+      "exit_code": -1,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0,
+      "scope": "partial",
+      "type": "test"
+    }
+  ],
+  "delivery_summary": null
+}
