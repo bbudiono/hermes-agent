@@ -157,3 +157,16 @@ async def test_watcher_task_is_supervised_and_restarts_after_crash(
 
     runner._running = False
     await asyncio.sleep(0.05)
+
+
+def test_watcher_restart_backoff_grows_and_caps() -> None:
+    """A deterministically-crashing watcher must not respawn at a fixed 5s
+    forever — the restart delay backs off exponentially to a cap, and resets
+    once the streak is cleared (after a stable run)."""
+    runner = _make_runner()
+    runner._watcher_crash_streak = 0
+    assert runner._watcher_restart_backoff() == 5.0
+    runner._watcher_crash_streak = 3
+    assert runner._watcher_restart_backoff() == 40.0
+    runner._watcher_crash_streak = 50
+    assert runner._watcher_restart_backoff() == 300.0

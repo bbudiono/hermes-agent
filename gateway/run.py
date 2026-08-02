@@ -7677,7 +7677,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
     # self state, so inheriting the mixin keeps every self._kanban_* call site
     # working unchanged while lifting ~1,000 LOC out of this file.
 
-    _WATCHER_RESTART_DELAY = 5.0  # seconds before respawning a crashed watcher
+    _WATCHER_RESTART_DELAY = 5.0  # base delay before respawning a crashed watcher
+    _WATCHER_RESTART_DELAY_CAP = 300.0  # backoff ceiling for a crash-looping watcher
+    _WATCHER_STABLE_RUN_S = 60.0  # a run this long clears the crash streak
 
     def _start_reconnect_watcher(self) -> None:
         """Spawn the reconnect watcher under supervision.
@@ -7685,31 +7687,46 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         The watcher used to be a bare ``asyncio.create_task`` — any exception
         escaping the loop killed it silently and nothing ever reconnected
         again for the life of the gateway, while platform state stayed on
-        "retrying" (2026-07-30 photon outage). The done-callback respawns it.
+        "retrying" (2026-07-30 photon outage). The done-callback respawns it,
+        backing off exponentially if it crash-loops (never giving up — a capped
+        slow respawn beats recreating the permanent silent outage).
         """
+        self._watcher_started_at = time.monotonic()
         task = asyncio.create_task(self._platform_reconnect_watcher())
         self._reconnect_watcher_task = task
         task.add_done_callback(self._on_reconnect_watcher_done)
 
+    def _watcher_restart_backoff(self) -> float:
+        streak = getattr(self, "_watcher_crash_streak", 0)
+        return min(
+            self._WATCHER_RESTART_DELAY * (2 ** min(streak, 8)),
+            self._WATCHER_RESTART_DELAY_CAP,
+        )
+
     def _on_reconnect_watcher_done(self, task: "asyncio.Task") -> None:
         if task.cancelled() or not self._running:
             return
+        ran_for = time.monotonic() - getattr(self, "_watcher_started_at", 0.0)
+        if ran_for >= self._WATCHER_STABLE_RUN_S:
+            self._watcher_crash_streak = 0
+        delay = self._watcher_restart_backoff()
+        self._watcher_crash_streak = getattr(self, "_watcher_crash_streak", 0) + 1
         exc = task.exception()
         if exc is not None:
             logger.error(
                 "Platform reconnect watcher crashed (%s) — restarting in %.0fs",
                 exc,
-                self._WATCHER_RESTART_DELAY,
+                delay,
                 exc_info=exc,
             )
         else:
             logger.error(
                 "Platform reconnect watcher exited unexpectedly — "
                 "restarting in %.0fs",
-                self._WATCHER_RESTART_DELAY,
+                delay,
             )
-        asyncio.get_event_loop().call_later(
-            self._WATCHER_RESTART_DELAY, self._maybe_restart_reconnect_watcher
+        asyncio.get_running_loop().call_later(
+            delay, self._maybe_restart_reconnect_watcher
         )
 
     def _maybe_restart_reconnect_watcher(self) -> None:

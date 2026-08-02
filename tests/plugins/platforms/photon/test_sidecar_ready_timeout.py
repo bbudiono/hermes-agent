@@ -23,9 +23,19 @@ def test_ready_timeout_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert photon_adapter._sidecar_ready_timeout() == 120.0
 
 
-@pytest.mark.parametrize("raw", ["", "not-a-number", "0", "-5"])
+@pytest.mark.parametrize("raw", ["", "not-a-number", "0", "-5", "nan", "inf", "-inf"])
 def test_ready_timeout_invalid_values_fall_back_to_default(
     monkeypatch: pytest.MonkeyPatch, raw: str
 ) -> None:
     monkeypatch.setenv("PHOTON_SIDECAR_READY_TIMEOUT", raw)
     assert photon_adapter._sidecar_ready_timeout() == 60.0
+
+
+def test_ready_timeout_is_clamped_to_upper_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PHOTON_SIDECAR_READY_TIMEOUT", "99999999")
+    assert (
+        photon_adapter._sidecar_ready_timeout()
+        == photon_adapter._MAX_SIDECAR_READY_TIMEOUT
+    )

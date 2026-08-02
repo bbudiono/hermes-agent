@@ -27,6 +27,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -96,6 +97,9 @@ _NPM_REINSTALL_TIMEOUT = 600
 # when the host is under load (observed at loadavg 25+ on 2026-08-02, where
 # the old hardcoded 15s window failed every reconnect attempt).
 _DEFAULT_SIDECAR_READY_TIMEOUT = 60.0
+# Upper bound: past this the sidecar is dead, not slow — an unbounded wait
+# would stall the whole reconnect pass on one platform.
+_MAX_SIDECAR_READY_TIMEOUT = 600.0
 
 
 def _sidecar_ready_timeout() -> float:
@@ -105,9 +109,9 @@ def _sidecar_ready_timeout() -> float:
         value = float(raw)
     except ValueError:
         return _DEFAULT_SIDECAR_READY_TIMEOUT
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         return _DEFAULT_SIDECAR_READY_TIMEOUT
-    return value
+    return min(value, _MAX_SIDECAR_READY_TIMEOUT)
 
 # Photon / Envoy / spectrum-ts error substrings that indicate a transient
 # upstream overload rather than a permanent failure.  These are not in the
