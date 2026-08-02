@@ -648,7 +648,9 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
     # Only the prefix check is exempted; exact-path and Hermes-config checks
     # below still apply to tempdir paths.
     tmp_root = os.path.realpath(tempfile.gettempdir()).rstrip("/") + "/"
-    in_process_tmp = resolved.startswith(tmp_root) or normalized.startswith(tmp_root)
+    # realpath, so a symlink that lexically sits under the tempdir but points
+    # outside it cannot inherit the exemption (symlink-escape).
+    in_process_tmp = os.path.realpath(resolved).startswith(tmp_root)
     if not in_process_tmp:
         for prefix in _SENSITIVE_PATH_PREFIXES:
             if resolved.startswith(prefix) or normalized.startswith(prefix):

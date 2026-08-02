@@ -579,6 +579,23 @@ class TestSensitivePathCheck:
         )
         assert _check_sensitive_path(tmp_target) is None
 
+    def test_tempdir_symlink_escape_still_blocked(self):
+        """A path that lexically sits under the tempdir but RESOLVES outside
+        it (symlink escape) must not inherit the tempdir exemption."""
+        import tempfile
+        from tools.file_tools import _check_sensitive_path
+
+        link_dir = os.path.join(
+            os.path.realpath(tempfile.gettempdir()), "hermes-escape-link"
+        )
+        try:
+            os.symlink("/etc", link_dir)
+            result = _check_sensitive_path(os.path.join(link_dir, "passwd"))
+        finally:
+            if os.path.islink(link_dir):
+                os.unlink(link_dir)
+        assert result is not None and "sensitive" in result
+
     def test_system_path_still_blocked(self, monkeypatch):
         monkeypatch.setattr("tools.file_tools._hermes_config_resolved", "/some/other/path")
         monkeypatch.setattr("tools.file_tools._hermes_config_resolved_loaded", True)
