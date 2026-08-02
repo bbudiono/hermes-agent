@@ -579,6 +579,16 @@ class TestSensitivePathCheck:
         )
         assert _check_sensitive_path(tmp_target) is None
 
+    def test_tempdir_exemption_ignores_hostile_tmpdir(self, monkeypatch):
+        """TMPDIR is attacker-influenceable env: pointing it at / (or any
+        non-temp root) must not turn the exemption into a global bypass."""
+        import tempfile
+        from tools.file_tools import _check_sensitive_path
+
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: "/")
+        result = _check_sensitive_path("/etc/passwd")
+        assert result is not None and "sensitive" in result
+
     def test_tempdir_symlink_escape_still_blocked(self):
         """A path that lexically sits under the tempdir but RESOLVES outside
         it (symlink escape) must not inherit the tempdir exemption."""

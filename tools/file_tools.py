@@ -649,8 +649,13 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
     # below still apply to tempdir paths.
     tmp_root = os.path.realpath(tempfile.gettempdir()).rstrip("/") + "/"
     # realpath, so a symlink that lexically sits under the tempdir but points
-    # outside it cannot inherit the exemption (symlink-escape).
-    in_process_tmp = os.path.realpath(resolved).startswith(tmp_root)
+    # outside it cannot inherit the exemption (symlink-escape). TMPDIR is
+    # attacker-influenceable env, so the exemption only engages when the
+    # tempdir itself resolves under a genuine temp root.
+    _TEMP_ROOTS = ("/var/folders/", "/private/var/folders/", "/tmp/", "/private/tmp/")
+    in_process_tmp = tmp_root.startswith(_TEMP_ROOTS) and os.path.realpath(
+        resolved
+    ).startswith(tmp_root)
     if not in_process_tmp:
         for prefix in _SENSITIVE_PATH_PREFIXES:
             if resolved.startswith(prefix) or normalized.startswith(prefix):
