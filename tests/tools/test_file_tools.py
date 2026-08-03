@@ -6,6 +6,7 @@ handling without requiring a running terminal environment.
 
 import json
 import logging
+import os
 from unittest.mock import MagicMock, patch
 
 from tools.file_tools import (
@@ -77,7 +78,7 @@ class TestWriteFileHandler:
         from tools.file_tools import write_file_tool
         result = json.loads(write_file_tool("/tmp/out.txt", "hello world!\n"))
         assert result["status"] == "ok"
-        mock_ops.write_file.assert_called_once_with("/tmp/out.txt", "hello world!\n")
+        mock_ops.write_file.assert_called_once_with(os.path.realpath("/tmp/out.txt"), "hello world!\n")
 
     @patch("tools.file_tools._get_file_ops")
     def test_permission_error_returns_error_json_without_error_log(self, mock_get, caplog):
@@ -182,7 +183,7 @@ class TestPatchHandler:
             old_string="foo", new_string="bar"
         ))
         assert result["status"] == "ok"
-        mock_ops.patch_replace.assert_called_once_with("/tmp/f.py", "foo", "bar", False)
+        mock_ops.patch_replace.assert_called_once_with(os.path.realpath("/tmp/f.py"), "foo", "bar", False)
 
     @patch("tools.file_tools._get_file_ops")
     def test_replace_mode_replace_all_flag(self, mock_get):
@@ -195,7 +196,7 @@ class TestPatchHandler:
         from tools.file_tools import patch_tool
         patch_tool(mode="replace", path="/tmp/f.py",
                    old_string="x", new_string="y", replace_all=True)
-        mock_ops.patch_replace.assert_called_once_with("/tmp/f.py", "x", "y", True)
+        mock_ops.patch_replace.assert_called_once_with(os.path.realpath("/tmp/f.py"), "x", "y", True)
 
     @patch("tools.file_tools._get_file_ops")
     def test_replace_mode_missing_path_errors(self, mock_get):
@@ -628,6 +629,45 @@ class TestSensitivePathCheck:
         ))
         assert "error" in result
         assert "Hermes config" in result["error"]
+
+    def test_process_tempdir_not_blocked(self, monkeypatch):
+        """macOS puts the per-user tempdir under /private/var/folders/... —
+        the /private/var/ prefix must not block the process's own tempdir,
+        or the agent can never write to tempfile.gettempdir() on macOS."""
+        import tempfile
+        from tools.file_tools import _check_sensitive_path
+
+        tmp_target = os.path.join(
+            os.path.realpath(tempfile.gettempdir()), "hermes-test", "sample.txt"
+        )
+        assert _check_sensitive_path(tmp_target) is None
+
+    def test_tempdir_exemption_ignores_hostile_tmpdir(self, monkeypatch):
+        """TMPDIR is attacker-influenceable env: pointing it at / (or any
+        non-temp root) must not turn the exemption into a global bypass."""
+        import tempfile
+        from tools.file_tools import _check_sensitive_path
+
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: "/")
+        result = _check_sensitive_path("/etc/passwd")
+        assert result is not None and "sensitive" in result
+
+    def test_tempdir_symlink_escape_still_blocked(self):
+        """A path that lexically sits under the tempdir but RESOLVES outside
+        it (symlink escape) must not inherit the tempdir exemption."""
+        import tempfile
+        from tools.file_tools import _check_sensitive_path
+
+        link_dir = os.path.join(
+            os.path.realpath(tempfile.gettempdir()), "hermes-escape-link"
+        )
+        try:
+            os.symlink("/etc", link_dir)
+            result = _check_sensitive_path(os.path.join(link_dir, "passwd"))
+        finally:
+            if os.path.islink(link_dir):
+                os.unlink(link_dir)
+        assert result is not None and "sensitive" in result
 
     def test_system_path_still_blocked(self, monkeypatch):
         monkeypatch.setattr("tools.file_tools._hermes_config_resolved", "/some/other/path")

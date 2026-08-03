@@ -3287,6 +3287,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Track platforms that failed to connect for background reconnection.
         # Key: Platform enum, Value: {"config": platform_config, "attempts": int, "next_retry": float}
         self._failed_platforms: Dict[Platform, Dict[str, Any]] = {}
+        # Supervised reconnect-watcher task (see _start_reconnect_watcher).
+        self._reconnect_watcher_task: Optional[asyncio.Task] = None
 
         # Track pending /update prompt responses per session.
         # Key: session_key, Value: True when a prompt is waiting for user input.
@@ -4378,8 +4380,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         # Queue retryable failures for background reconnection
         if adapter.fatal_error_retryable:
+            # Plugin/runtime-registered platforms can be absent from the
+            # static config map — fall back to the config the adapter was
+            # built with. A silent drop here left photon stuck on "retrying"
+            # with nothing ever retrying (2026-07-30, 3-day iMessage outage).
             platform_config = self.config.platforms.get(adapter.platform)
-            if platform_config and adapter.platform not in self._failed_platforms:
+            if platform_config is None:
+                platform_config = getattr(adapter, "config", None)
+            if platform_config is None:
+                logger.error(
+                    "%s fatal error is retryable but no platform config is "
+                    "available — cannot queue for reconnection; platform "
+                    "stays down until gateway restart",
+                    adapter.platform.value,
+                )
+            elif adapter.platform not in self._failed_platforms:
                 self._failed_platforms[adapter.platform] = {
                     "config": platform_config,
                     "attempts": 0,
@@ -4387,6 +4402,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 }
                 logger.info(
                     "%s queued for background reconnection",
+                    adapter.platform.value,
+                )
+            else:
+                # Already queued (e.g. a second fatal from the same outage) —
+                # refresh the retry clock so the watcher acts promptly instead
+                # of waiting out a stale backoff, unless the operator paused it.
+                info = self._failed_platforms[adapter.platform]
+                if not info.get("paused"):
+                    info["next_retry"] = time.monotonic()
+                logger.info(
+                    "%s already queued for reconnection — retry refreshed",
                     adapter.platform.value,
                 )
 
@@ -7940,7 +7966,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 len(self._failed_platforms),
                 ", ".join(p.value for p in self._failed_platforms),
             )
-        self._spawn_supervised(self._platform_reconnect_watcher, "platform_reconnect_watcher")
+        self._start_reconnect_watcher()
 
         # Start background handoff watcher — picks up CLI sessions marked
         # handoff_state='pending' in state.db and re-binds them to the
@@ -8496,6 +8522,62 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
     # self state, so inheriting the mixin keeps every self._kanban_* call site
     # working unchanged while lifting ~1,000 LOC out of this file.
 
+    _WATCHER_RESTART_DELAY = 5.0  # base delay before respawning a crashed watcher
+    _WATCHER_RESTART_DELAY_CAP = 300.0  # backoff ceiling for a crash-looping watcher
+    _WATCHER_STABLE_RUN_S = 60.0  # a run this long clears the crash streak
+
+    def _start_reconnect_watcher(self) -> None:
+        """Spawn the reconnect watcher under supervision.
+
+        The watcher used to be a bare ``asyncio.create_task`` — any exception
+        escaping the loop killed it silently and nothing ever reconnected
+        again for the life of the gateway, while platform state stayed on
+        "retrying" (2026-07-30 photon outage). The done-callback respawns it,
+        backing off exponentially if it crash-loops (never giving up — a capped
+        slow respawn beats recreating the permanent silent outage).
+        """
+        self._watcher_started_at = time.monotonic()
+        task = asyncio.create_task(self._platform_reconnect_watcher())
+        self._reconnect_watcher_task = task
+        task.add_done_callback(self._on_reconnect_watcher_done)
+
+    def _watcher_restart_backoff(self) -> float:
+        streak = getattr(self, "_watcher_crash_streak", 0)
+        return min(
+            self._WATCHER_RESTART_DELAY * (2 ** min(streak, 8)),
+            self._WATCHER_RESTART_DELAY_CAP,
+        )
+
+    def _on_reconnect_watcher_done(self, task: "asyncio.Task") -> None:
+        if task.cancelled() or not self._running:
+            return
+        ran_for = time.monotonic() - getattr(self, "_watcher_started_at", 0.0)
+        if ran_for >= self._WATCHER_STABLE_RUN_S:
+            self._watcher_crash_streak = 0
+        delay = self._watcher_restart_backoff()
+        self._watcher_crash_streak = getattr(self, "_watcher_crash_streak", 0) + 1
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Platform reconnect watcher crashed (%s) — restarting in %.0fs",
+                exc,
+                delay,
+                exc_info=exc,
+            )
+        else:
+            logger.error(
+                "Platform reconnect watcher exited unexpectedly — "
+                "restarting in %.0fs",
+                delay,
+            )
+        asyncio.get_running_loop().call_later(
+            delay, self._maybe_restart_reconnect_watcher
+        )
+
+    def _maybe_restart_reconnect_watcher(self) -> None:
+        if self._running:
+            self._start_reconnect_watcher()
+
     async def _platform_reconnect_watcher(self) -> None:
         """Background task that periodically retries connecting failed platforms.
 
@@ -8522,11 +8604,33 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     await asyncio.sleep(1)
                 continue
 
-            now = time.monotonic()
-            for platform in list(self._failed_platforms.keys()):
+            await self._reconnect_pass()
+
+            # Check every 10 seconds for platforms that need reconnection
+            for _ in range(10):
                 if not self._running:
                     return
-                info = self._failed_platforms[platform]
+                await asyncio.sleep(1)
+
+    async def _reconnect_pass(self) -> None:
+        """One retry sweep over the failed-platform queue.
+
+        Extracted from the watcher loop for unit-testability. Tolerates
+        concurrent mutation of ``_failed_platforms``: a platform removed
+        while an earlier entry's reconnect was being awaited used to raise
+        KeyError outside the per-attempt try/except, killing the watcher.
+        """
+        _BACKOFF_CAP = 300  # 5 minutes max between retries
+        now = time.monotonic()
+        for platform in list(self._failed_platforms.keys()):
+                if not self._running:
+                    return
+                info = self._failed_platforms.get(platform)
+                if info is None:
+                    # Removed concurrently (reconnected via another path or
+                    # unqueued) while an earlier entry's reconnect was
+                    # awaited — skip, never KeyError.
+                    continue
                 # Skip paused platforms entirely — they need explicit
                 # /platform resume to come back.
                 if info.get("paused"):
@@ -8688,12 +8792,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     # A raised exception during reconnect (connect timeout, DNS
                     # resolution failure, etc.) is inherently transient — keep
                     # retrying at the backoff cap rather than auto-pausing.
-
-            # Check every 10 seconds for platforms that need reconnection
-            for _ in range(10):
-                if not self._running:
-                    return
-                await asyncio.sleep(1)
 
     async def _cancel_secondary_profile_reconnect_tasks(self) -> None:
         """Cancel profile-scoped reconnects before tearing down their registry.

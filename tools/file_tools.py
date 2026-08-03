@@ -7,6 +7,7 @@ import logging
 import os
 import posixpath
 import sys
+import tempfile
 import threading
 from pathlib import Path, PurePosixPath
 
@@ -604,9 +605,24 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
         f"Refusing to write to sensitive system path: {filepath}\n"
         "Use the terminal tool with sudo if you need to modify system files."
     )
-    for prefix in _SENSITIVE_PATH_PREFIXES:
-        if resolved.startswith(prefix) or normalized.startswith(prefix):
-            return _err
+    # The process's own tempdir is never a sensitive *system* location — on
+    # macOS it lives under /private/var/folders/..., which the /private/var/
+    # prefix would otherwise block, making tempfile.gettempdir() unwritable.
+    # Only the prefix check is exempted; exact-path and Hermes-config checks
+    # below still apply to tempdir paths.
+    tmp_root = os.path.realpath(tempfile.gettempdir()).rstrip("/") + "/"
+    # realpath, so a symlink that lexically sits under the tempdir but points
+    # outside it cannot inherit the exemption (symlink-escape). TMPDIR is
+    # attacker-influenceable env, so the exemption only engages when the
+    # tempdir itself resolves under a genuine temp root.
+    _TEMP_ROOTS = ("/var/folders/", "/private/var/folders/", "/tmp/", "/private/tmp/")
+    in_process_tmp = tmp_root.startswith(_TEMP_ROOTS) and os.path.realpath(
+        resolved
+    ).startswith(tmp_root)
+    if not in_process_tmp:
+        for prefix in _SENSITIVE_PATH_PREFIXES:
+            if resolved.startswith(prefix) or normalized.startswith(prefix):
+                return _err
     if resolved in _SENSITIVE_EXACT_PATHS or normalized in _SENSITIVE_EXACT_PATHS:
         return _err
     # Prevent agents from modifying the Hermes config file directly.
