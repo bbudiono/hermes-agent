@@ -13,14 +13,21 @@ description of what is in the tree today, not an aspiration.
 | `hermes-agent` | `run_agent:main` | Runs a single agent session directly |
 | `hermes-acp` | `acp_adapter.entry:main` | Agent Client Protocol adapter for external editors |
 
-**Agent core** (`agent/`, ~120 modules) — the turn loop, provider adapters
+**Agent core** (`agent/`) — the turn loop, provider adapters
 (`anthropic_adapter.py` and friends), context assembly, compression, subagent
 delegation, and usage accounting. Sibling top-level modules carry the shared state and
 schema: `hermes_state.py` (persistence), `model_tools.py` / `toolsets.py` (the tool
 schema sent to the model), `hermes_constants.py`, `trajectory_compressor.py`.
 
-**Providers** (`providers/`) — a thin base class plus per-provider shims so any
-OpenAI-compatible endpoint, Nous Portal, OpenRouter or Anthropic works unchanged.
+**Providers** — provider neutrality is split across two places. `providers/` is the
+registry and the `ProviderProfile` ABC (`__init__.py`, `base.py`) plus back-compat for
+legacy `providers/<name>.py` modules. The 33 actual inference backends (openrouter,
+anthropic, gmi, deepseek, nvidia, vertex, …) ship as plugins under
+`plugins/model-providers/<name>/`, each calling `providers.register_provider(...)` at
+module load. `providers/__init__.py::_discover_providers()` scans them lazily on the
+first `get_provider_profile()` / `list_providers()` call — this is a separate discovery
+system from the general `PluginManager`. Add a new provider under
+`plugins/model-providers/`, never to `providers/`.
 
 **Tools** (`tools/`) — the implementations behind the model-visible tool schema: shell,
 browser (Camoufox), file editing, delegation, approval flows.
@@ -39,7 +46,7 @@ browser (Camoufox), file editing, delegation, approval flows.
 automations run unattended and deliver to any platform.
 
 **Extension surface** (`skills/`, `optional-skills/`, `plugins/`,
-`optional-mcps/`) — where new capability is meant to land. Skills follow the
+`optional-mcps/`) — including `plugins/model-providers/` above — where new capability is meant to land. Skills follow the
 agentskills.io layout; plugins register their own tools and hooks.
 
 **Docs site** (`website/`) — Docusaurus source for the published documentation.
@@ -62,8 +69,15 @@ originating channel. The CLI and TUI paths skip the gateway and call the core di
 
 ## Persistence and configuration
 
-Session and agent state live in `hermes_state.py`-managed local storage; configuration
-comes from `cli-config.yaml` / environment (`.env.example` documents every variable).
+Session and agent state live in `hermes_state.py`-managed local storage (SQLite with FTS5
+session search). Runtime configuration is `~/.hermes/config.yaml`, resolved profile-aware
+through `get_hermes_home()` in `hermes_constants.py` — `cli-config.yaml.example` in the
+repo root is a reference sample, not the file the runtime reads.
+
+**`.env` is secrets only** — API keys, tokens, passwords. Every behavioural setting
+(timeouts, thresholds, feature flags, display preferences) belongs in `config.yaml`. A
+change that tells users to "set `HERMES_X` in your `.env`" for non-secret config is
+rejected on review; bridge from `config.yaml` to an internal env var in code instead.
 Secrets are never committed. Deployment topologies (local, Docker, SSH, Singularity,
 Modal, Daytona) are selected per terminal backend and share the same core.
 

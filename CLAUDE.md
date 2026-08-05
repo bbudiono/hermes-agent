@@ -1,3 +1,4 @@
+<!-- Generated from AGENTS.md — do not hand-edit. Edit AGENTS.md and re-copy. -->
 # Hermes Agent - Development Guide
 
 Instructions for AI coding assistants and developers working on the hermes-agent codebase.

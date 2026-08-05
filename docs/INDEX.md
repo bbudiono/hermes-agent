@@ -11,7 +11,7 @@ Canonical index of the Hermes Agent documentation set. The published site lives 
 | [VISION.md](../VISION.md) | Why it exists and what we refuse to build |
 | [BLUEPRINT.md](../BLUEPRINT.md) | The non-negotiable project requirements and scope |
 | [AGENTS.md](../AGENTS.md) | Development guide and contribution rubric (canonical) |
-| [CLAUDE.md](../CLAUDE.md) | Mirror of AGENTS.md for Claude-based tooling |
+| [CLAUDE.md](../CLAUDE.md) | Copy of AGENTS.md for Claude-based tooling — re-copy after editing AGENTS.md; nothing enforces it automatically |
 
 ## Building and shipping
 

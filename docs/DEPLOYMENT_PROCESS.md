@@ -14,23 +14,37 @@ $5 VPS, a GPU box, or serverless infrastructure — and keeping it running.
 | Nix | `nix develop` / the flake in `flake.nix` |
 | From source | `uv sync && uv run hermes` |
 
+The one-liners pipe a remote script straight into a shell. If your environment forbids
+that, download the installer and read it before running, or skip it entirely and install
+from a pinned source tag (`git clone`, `git checkout vX.Y.Z`, `uv sync`) — the from-source
+path is equivalent and auditable.
+
 The installer provisions uv, Python 3.11, Node.js, ripgrep and ffmpeg; on Windows it also
 unpacks a portable MinGit under `%LOCALAPPDATA%\hermes\git` rather than touching a system
 Git install.
 
 ## Configure
 
-1. Copy `.env.example` and fill in only what you use — it documents every variable.
-   Credentials stay in the environment or the local config; never commit them.
-2. `cli-config.yaml.example` is the reference for the full config surface.
+Run `hermes setup` for the guided path. What it configures:
+
+1. **Secrets** in `~/.hermes/.env` — API keys, tokens, passwords, and nothing else.
+   `.env.example` lists the recognised variables. Never commit them.
+2. **Settings** in `~/.hermes/config.yaml` — every behavioural option (timeouts,
+   thresholds, feature flags, display preferences). This is the file the runtime reads,
+   resolved profile-aware through `get_hermes_home()`; the repo's
+   `cli-config.yaml.example` is a reference sample, not a live config.
 3. Pick a model with `hermes model` — no code change, any supported provider.
-4. Pair the channels you want (`gateway/pairing.py` drives this from the CLI).
 
 ## Run the gateway
 
+Order matters on a fresh host — `start` alone fails before the gateway is configured:
+
 ```bash
+hermes gateway setup        # configure messaging platforms (required first)
+hermes gateway install      # optional: install the service unit for auto-start
 hermes gateway start        # long-running multi-platform process
 hermes gateway status       # readiness and channel state
+hermes gateway restart      # reload after a config change
 hermes gateway stop         # drains in-flight work before exiting
 ```
 

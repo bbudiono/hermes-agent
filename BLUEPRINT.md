@@ -19,16 +19,22 @@ the non-negotiable requirements every change is measured against.
    so new *core* tools carry a high bar. New capability arrives as a CLI command plus a
    skill, a service-gated tool, or a plugin under `plugins/`.
 4. **Provider neutrality.** Any OpenAI-compatible endpoint, Nous Portal, OpenRouter,
-   Anthropic or a self-hosted model must work through `providers/` with no code change —
-   switching is a `hermes model` operation.
+   Anthropic or a self-hosted model must work with no core code change — backends ship as
+   plugins under `plugins/model-providers/`, registered through the `providers/` ABC.
+   Switching is a `hermes model` operation.
 5. **Runs anywhere.** Six terminal backends (local, Docker, SSH, Singularity, Modal,
    Daytona) must stay interchangeable, including the serverless hibernate/wake paths.
 6. **The learning loop stays closed.** Agent-curated memory, autonomous skill creation,
    in-use skill improvement and FTS5 session search are product-defining; a change that
    silently degrades any of them is a regression even when tests pass.
-7. **Tests are headless, silent and automated.** `pytest` with `-m 'not integration'` is
-   the default lane; integration tests are opt-in and must never be required to prove a
+7. **Tests are headless, silent and automated.** `scripts/run_tests.sh` is the only
+   sanctioned Python invocation (it enforces CI parity); `-m 'not integration'` is the
+   default lane, and integration tests are opt-in and must never be required to prove a
    normal change works.
+
+8. **`.env` is secrets only.** Behavioural settings live in `~/.hermes/config.yaml`,
+   resolved profile-aware via `get_hermes_home()`. New `HERMES_*` env vars for non-secret
+   config are rejected.
 
 </P0_PROJECT_REQUIREMENTS>
 
@@ -47,8 +53,8 @@ credentials live in the user's environment or config, never in this repository.
 | Core / CLI / gateway | Python 3.11–3.13, `uv` |
 | Desktop + web UI | Electron, TypeScript, Vite (`apps/desktop`, `web/`) |
 | Docs site | Docusaurus (`website/`) |
-| Packaging | setuptools wheel, Docker, Nix flake, install.sh / install.ps1 |
-| Tests | pytest (`tests/`), Node test runner (`tests-js/`) |
+| Packaging | setuptools wheel, Docker, Nix flake, `scripts/install.sh` / `scripts/install.ps1` |
+| Tests | pytest via `scripts/run_tests.sh` (`tests/`), vitest per JS workspace |
 | Lint | ruff (PLW1514 enforced), eslint, hadolint, prettier |
 
 ## Delivery Criteria

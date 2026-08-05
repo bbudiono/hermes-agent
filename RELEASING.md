@@ -10,17 +10,21 @@ Hermes Agent versions live in `pyproject.toml` (`[project] version`) and follow
 
 ## Checklist
 
-1. **Green baseline.** `uv run pytest` and `npm test` pass; CI's `all-checks-pass` gate is
-   green on `main`.
+1. **Green baseline.** `scripts/run_tests.sh` passes (never bare `pytest` — see
+   [TESTING.md](TESTING.md)), the per-workspace JS suites pass
+   (`npm test --workspace ui-tui`, `--workspace apps/desktop`, `--workspace web`), and
+   CI's `all-checks-pass` gate is green on `main`.
 2. **Bump the version** in `pyproject.toml`. Nothing else hardcodes it.
 3. **Update [CHANGELOG.md](CHANGELOG.md)** — move `Unreleased` items under the new
    version heading with the release date. A release without an entry is not releasable.
 4. **Refresh the docs that track behaviour**: `README.md`, `docs/ARCHITECTURE.md`,
    `docs/ARCHITECTURE_MAP.md`, `docs/INDEX.md`, `docs/DEPLOYMENT_PROCESS.md`,
    `TESTING.md`, and re-export `docs/diagrams/architecture.html` if the source diagram
-   changed.
-5. **Verify the install paths** still work end to end: `install.sh` (Linux/macOS/WSL2),
-   `install.ps1` (native Windows), the Docker image, and the Nix flake.
+   changed. If `AGENTS.md` changed, re-copy it over `CLAUDE.md` (keeping the
+   do-not-hand-edit header line) — no generator or CI check does this for you.
+5. **Verify the install paths** still work end to end: `scripts/install.sh`
+   (Linux/macOS/WSL2), `scripts/install.ps1` (native Windows), the Docker image, and the
+   Nix flake.
 6. **Tag and release.** `git tag vX.Y.Z && git push origin vX.Y.Z`, then publish the
    GitHub release with the changelog section as its body.
 7. **Publish artifacts** — wheel and container image via the packaging workflows.

@@ -5,24 +5,42 @@ windows opening on a developer's desktop.
 
 ## Running the suites
 
-```bash
-# Python (default lane: integration tests excluded via pyproject addopts)
-uv run pytest
+**Always use `scripts/run_tests.sh`. Never call `pytest` directly.** The wrapper is what
+gives you CI parity: it unsets credential env vars, pins `TZ=UTC`, `LANG=C.UTF-8` and
+`PYTHONHASHSEED=0`, redirects `HERMES_HOME` to a temp dir, and runs each test file in its
+own freshly-spawned subprocess so module-level state cannot leak between files. Bare
+`pytest` on a developer machine with API keys set has repeatedly produced
+works-locally-fails-in-CI incidents (and the reverse).
 
-# A single area
-uv run pytest tests/gateway
-uv run pytest tests/agent -x
+```bash
+# Full suite, CI parity
+scripts/run_tests.sh
+
+# One directory or one test — pytest paths pass straight through
+scripts/run_tests.sh tests/gateway/
+scripts/run_tests.sh tests/agent/test_foo.py::test_x
+
+# pytest flags pass through too
+scripts/run_tests.sh -v --tb=long
 
 # Integration tests (external services, API keys, Modal) — opt in explicitly
-uv run pytest -m integration
-
-# JavaScript / TypeScript
-npm test
+scripts/run_tests.sh -m integration
 ```
 
 `pyproject.toml` sets `testpaths = ["tests"]` and `addopts = "-m 'not integration'"`, so
 the default run is the fast lane. Integration tests are never a requirement for proving
 an ordinary change works.
+
+JavaScript and TypeScript are per-workspace — there is no root `test` script:
+
+```bash
+npm test --workspace ui-tui
+npm test --workspace apps/desktop     # or: cd apps/desktop && npx vitest run
+npm test --workspace web
+```
+
+Workspace dependencies install from the repo root (`npm run install:tui`,
+`install:desktop`, `install:web`).
 
 ## Layout
 
@@ -46,9 +64,19 @@ an ordinary change works.
   detection.
 - `real_agent_prewarm` — opts out of the autouse stub disabling the TUI pre-warm timer.
 
+## Flake policy
+
+The runner auto-retries a failing test **file** once in a fresh subprocess
+(`--file-retries`, default 1; `HERMES_TEST_FILE_RETRIES=0` disables it). A pass on retry
+counts as green but is printed in a `⚠ FLAKY` summary with both attempts' output. FLAKY is
+a bug to fix, not noise to ignore — timing-sensitive tests must not assume a quiet runner:
+use loose wall-clock bounds (≥ 2s), event-based synchronisation, and no negative-timing
+races like `assert not _wait_until(...)`.
+
 ## What a change must prove
 
-1. The non-integration suite is green before and after.
+1. The non-integration suite is green before and after, run through
+   `scripts/run_tests.sh`.
 2. New behaviour has a test that fails without the change. A passing suite proves nothing
    about code no test touches.
 3. Name one thing that should *not* have changed and verify it — regressions in the
@@ -60,7 +88,7 @@ an ordinary change works.
 
 ```bash
 uv run ruff check .      # PLW1514 (explicit encoding) is enforced
-npx eslint .             # JS/TS
+npm run --ws check       # eslint + prettier across the JS workspaces
 hadolint Dockerfile      # container lint
 ```
 

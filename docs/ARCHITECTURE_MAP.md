@@ -21,7 +21,8 @@ python3 ~/.agents/skills/creative/excalidraw/scripts/export_html.py \
 | Path | Responsibility |
 |------|----------------|
 | `agent/` | Agent core: turn loop, provider adapters, context assembly, delegation |
-| `providers/` | Per-provider shims over a common base; provider neutrality lives here |
+| `providers/` | Provider **registry + `ProviderProfile` ABC** only (`__init__.py`, `base.py`), plus back-compat for legacy `providers/<name>.py`. Do not add providers here |
+| `plugins/model-providers/<name>/` | The 33 real inference backends (openrouter, anthropic, gmi, deepseek, nvidia, vertex, …). Each calls `providers.register_provider(...)` at load; discovered lazily by `providers/__init__.py::_discover_providers()`. **This is where a new provider goes** |
 | `tools/` | Implementations behind the model-visible tool schema |
 | `model_tools.py`, `toolsets.py`, `toolset_distributions.py` | The tool schema itself and how it is bundled per surface |
 | `hermes_state.py` | Session/agent persistence |
@@ -52,7 +53,7 @@ python3 ~/.agents/skills/creative/excalidraw/scripts/export_html.py \
 | `delivery.py`, `delivery_ledger.py` | Outbound delivery and idempotency |
 | `authz_mixin.py`, `pairing.py` | Authorisation and device pairing |
 | `drain_control.py`, `scale_to_zero.py`, `shutdown_watchdog.py` | Lifecycle, hibernation, safe shutdown |
-| `builtin_hooks/` | Hooks fired at defined gateway lifecycle points |
+| `builtin_hooks/` | Extension point for always-registered gateway hooks (none shipped today) |
 
 ## Cross-cutting docs
 
