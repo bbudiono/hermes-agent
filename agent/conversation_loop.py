@@ -1409,7 +1409,7 @@ def run_conversation(
                 # stream.  Mirror the ACP exclusion used for Responses
                 # API upgrade (lines ~1083-1085).
                 elif (
-                    agent.provider in {"copilot-acp"}
+                    agent.provider in {"copilot-acp", "agy"}  # agy: one-shot CLI (#39)
                     or str(agent.base_url or "").lower().startswith("acp://copilot")
                     or str(agent.base_url or "").lower().startswith("acp+tcp://")
                 ):

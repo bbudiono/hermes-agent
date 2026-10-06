@@ -5256,6 +5256,21 @@ def resolve_provider_client(
                 else (client, final_model))
 
     if pconfig.auth_type == "external_process":
+        if provider == "agy":
+            try:
+                creds = resolve_external_process_provider_credentials(provider)
+            except Exception as exc:  # agy missing: skip this rung, don't fail the turn
+                logger.warning("resolve_provider_client: agy unavailable: %s", exc)
+                return None, None
+            final_model = model or (main_runtime.get("model") if main_runtime else None)
+            if not final_model:
+                logger.warning("resolve_provider_client: agy requested but no model was given")
+                return None, None
+            from agent.agy_cli_client import AgyCLIClient
+
+            client = AgyCLIClient(command=creds["command"])
+            return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
+                    else (client, final_model))
         creds = resolve_external_process_provider_credentials(provider)
         final_model = _normalize_resolved_model(
             model
