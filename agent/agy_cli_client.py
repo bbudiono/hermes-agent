@@ -9,7 +9,9 @@ Any failure raises, so the agent loop retries and then fails over to the next
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import tempfile
 from types import SimpleNamespace
 from typing import Any
 
@@ -17,7 +19,8 @@ from agent.copilot_acp_client import _completion_to_stream_chunks
 from tools.environments.local import hermes_subprocess_env
 
 AGY_MARKER_BASE_URL = "agy://local"
-_DEFAULT_TIMEOUT_SECONDS = 900.0
+# Short on purpose: a hung agy must hand the turn to the next rung quickly (#39 review r1).
+_DEFAULT_TIMEOUT_SECONDS = 180.0
 _GOOGLE_KEY_VARS = ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY")
 
 
@@ -59,7 +62,7 @@ class AgyCLIClient:
 
     def __init__(self, *, command: str | None = None, api_key: str | None = None,
                  base_url: str | None = None, **_: Any):
-        self._command = command or "agy"
+        self._command = command or shutil.which("agy") or "agy"
         self.api_key = api_key or "agy"
         self.base_url = base_url or AGY_MARKER_BASE_URL
         self.chat = SimpleNamespace(completions=_Completions(self))
@@ -70,17 +73,21 @@ class AgyCLIClient:
 
     def _create(self, *, model: str | None = None, messages: list[dict[str, Any]] | None = None,
                 timeout: Any = None, stream: bool = False, **_: Any) -> Any:
-        argv = [self._command, "--print", _flatten(messages or []),
-                "--output-format", "text", "--disable-slash-commands", "--mode", "plan"]
+        seconds = _seconds(timeout)
+        # --print=<prompt> keeps any prompt text from being read as a flag; --sandbox plus an
+        # empty working directory keep injected text from reading local files (#39 review r1).
+        argv = [self._command, f"--print={_flatten(messages or [])}", "--output-format", "text",
+                "--disable-slash-commands", "--mode", "plan", "--sandbox",
+                f"--print-timeout={int(seconds)}s"]
         if model:
             argv += ["--model", model]
         env = hermes_subprocess_env(inherit_credentials=False)
         for key in _GOOGLE_KEY_VARS:  # OAuth login only (provider-CLI mandate)
             env.pop(key, None)
-        seconds = _seconds(timeout)
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=seconds,
-                                  env=env, stdin=subprocess.DEVNULL)
+            with tempfile.TemporaryDirectory(prefix="hermes-agy-") as workdir:
+                proc = subprocess.run(argv, capture_output=True, text=True, timeout=seconds + 15,
+                                      env=env, stdin=subprocess.DEVNULL, cwd=workdir)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"agy timed out after {seconds:.0f}s") from exc
         except FileNotFoundError as exc:

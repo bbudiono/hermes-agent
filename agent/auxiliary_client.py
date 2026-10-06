@@ -1633,7 +1633,8 @@ def _maybe_wrap_anthropic(
         pass
     try:
         from agent.copilot_acp_client import CopilotACPClient
-        if _safe_isinstance(client_obj, CopilotACPClient):
+        from agent.agy_cli_client import AgyCLIClient
+        if _safe_isinstance(client_obj, (CopilotACPClient, AgyCLIClient)):
             return client_obj
     except ImportError:
         pass
@@ -4602,7 +4603,8 @@ def _to_async_client(sync_client, model: str, is_vision: bool = False):
         pass
     try:
         from agent.copilot_acp_client import CopilotACPClient
-        if isinstance(sync_client, CopilotACPClient):
+        from agent.agy_cli_client import AgyCLIClient
+        if isinstance(sync_client, (CopilotACPClient, AgyCLIClient)):
             return sync_client, model
     except ImportError:
         pass

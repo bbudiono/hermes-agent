@@ -1857,6 +1857,15 @@ def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: boo
             agent._client_log_context(),
         )
         return client
+    if agent.provider == "agy" or str(client_kwargs.get("base_url", "")).startswith("agy://"):
+        from agent.agy_cli_client import AgyCLIClient
+
+        # Every request builds its client here; without this an agy fallback rung
+        # got a plain OpenAI client for agy://local and never ran (#39 review r1).
+        client = AgyCLIClient(**client_kwargs)
+        _ra().logger.info("agy CLI client created (%s, shared=%s) %s",
+                          reason, shared, agent._client_log_context())
+        return client
     if agent.provider == "gemini":
         from agent.gemini_native_adapter import GeminiNativeClient, is_native_gemini_base_url
 

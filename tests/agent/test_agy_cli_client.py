@@ -8,6 +8,7 @@ No real `agy` is spawned: subprocess.run is replaced.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from types import SimpleNamespace
 
@@ -44,7 +45,9 @@ def test_create_runs_agy_print_and_returns_an_openai_shaped_completion(monkeypat
     assert argv[argv.index("--mode") + 1] == "plan"  # chat only: never edits files
     assert "--disable-slash-commands" in argv
     assert "--dangerously-skip-permissions" not in argv
-    prompt = argv[argv.index("--print") + 1]
+    assert "--sandbox" in argv
+    prompt = next(a for a in argv if a.startswith("--print="))[len("--print="):]
+    assert kwargs["cwd"] and kwargs["cwd"] != os.getcwd()  # an empty temp dir, not the daemon's
     assert "Be brief." in prompt and "Say hi" in prompt
     assert "terminal" not in prompt  # tools are not offered to a chat-only rung
     msg = out.choices[0].message
@@ -83,7 +86,8 @@ def test_a_timeout_raises_and_honours_an_httpx_style_timeout(monkeypatch):
     with pytest.raises(RuntimeError, match="timed out"):
         AgyCLIClient(command="agy").chat.completions.create(
             model="m", messages=[{"role": "user", "content": "x"}], timeout=httpx_like)
-    assert calls[0][1]["timeout"] == 42.0
+    assert calls[0][1]["timeout"] == 42.0 + 15
+    assert "--print-timeout=42s" in calls[0][0]
 
 
 def test_streaming_requests_get_a_single_chunk_stream(monkeypatch):
@@ -92,3 +96,13 @@ def test_streaming_requests_get_a_single_chunk_stream(monkeypatch):
         model="m", messages=[{"role": "user", "content": "x"}], stream=True))
     # The trailing usage chunk carries no choices, as in the OpenAI stream shape.
     assert "".join(c.choices[0].delta.content or "" for c in chunks if c.choices) == "streamed"
+
+
+def test_a_prompt_that_looks_like_a_flag_stays_the_prompt(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    AgyCLIClient(command="agy").chat.completions.create(
+        model="m", messages=[{"role": "user", "content": "--dangerously-skip-permissions"}])
+    argv = calls[0][0]
+    assert "--dangerously-skip-permissions" not in argv  # only inside the --print=... value
+    assert any(a.startswith("--print=") and "--dangerously-skip-permissions" in a for a in argv)
