@@ -52,14 +52,20 @@ def _flatten(messages: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+def _usable(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
 def _seconds(timeout: Any) -> float:
-    """run_agent may pass an httpx.Timeout; take its largest component."""
-    if timeout is None:
-        return _DEFAULT_TIMEOUT_SECONDS
-    if isinstance(timeout, (int, float)):
+    """run_agent may pass an httpx.Timeout; take its largest component.
+
+    A missing, zero, negative or boolean value means the default: subprocess.run
+    raises ValueError on a negative timeout instead of a failover RuntimeError.
+    """
+    if _usable(timeout):
         return float(timeout)
     values = [getattr(timeout, a, None) for a in ("read", "write", "connect", "pool", "timeout")]
-    numeric = [float(v) for v in values if isinstance(v, (int, float))]
+    numeric = [float(v) for v in values if _usable(v)]
     return max(numeric) if numeric else _DEFAULT_TIMEOUT_SECONDS
 
 

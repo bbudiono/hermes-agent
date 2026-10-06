@@ -195,3 +195,13 @@ def test_an_unexpected_result_shape_is_still_a_runtime_error(monkeypatch, result
     monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run([], stdout=stdout))
     with pytest.raises(RuntimeError, match="agy"):
         _create(AgyCLIClient(command="agy"))
+
+
+@pytest.mark.parametrize("bad", [-5, 0, True, False])
+def test_a_nonsense_timeout_falls_back_to_the_default(monkeypatch, bad):
+    # A negative, zero or boolean timeout must not reach subprocess.run, which
+    # raises ValueError for a negative one instead of a failover RuntimeError.
+    calls: list = []
+    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    _create(AgyCLIClient(command="agy"), timeout=bad)
+    assert calls[0][1]["timeout"] == agy_mod._DEFAULT_TIMEOUT_SECONDS + 15
