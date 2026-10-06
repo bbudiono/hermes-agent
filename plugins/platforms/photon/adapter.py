@@ -497,8 +497,11 @@ class PhotonAdapter(BasePlatformAdapter):
         if self._sidecar_health_task is not None:
             task = self._sidecar_health_task
             self._sidecar_health_task = None
-            task.cancel()
+            # The health task itself reaches here through the gateway's fatal
+            # handler; cancelling it would abort that handler before it queues
+            # the reconnect (repo_hermes_primary#36). It ends on its own.
             if task is not asyncio.current_task():
+                task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:

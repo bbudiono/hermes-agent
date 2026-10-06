@@ -19,6 +19,7 @@ No Node sidecar is spawned and no ports are bound.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict
 
 import pytest
@@ -234,3 +235,38 @@ async def test_degraded_stream_health_raises_retryable_fatal(
     assert adapter.fatal_error_code == "UPSTREAM_STREAM_DEGRADED"
     assert adapter.fatal_error_retryable is True
     assert notified == [True]
+
+
+@pytest.mark.asyncio
+async def test_degraded_stream_teardown_from_the_health_task_reaches_the_reconnect_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # repo_hermes_primary#36: the gateway's fatal handler runs inside the health
+    # task and awaits disconnect(), which cancelled that same task. The next
+    # await raised CancelledError, so the handler never queued the reconnect and
+    # Photon stayed down until a gateway restart (57 h on 2026-10-03).
+    adapter = _make_adapter(monkeypatch)
+    adapter._inbound_running = True
+    adapter._sidecar_health_interval = 0.0
+
+    async def _degraded(path: str, payload: Dict[str, Any]) -> Any:
+        return {"ok": True, "stream": {"ok": False, "state": "degraded"}}
+
+    async def _stop_sidecar() -> None:
+        await asyncio.sleep(0)  # a real await, like the sidecar teardown
+
+    queued: list[str] = []
+
+    async def _handler(failed: PhotonAdapter) -> None:
+        await failed.disconnect()  # what _safe_adapter_disconnect does
+        queued.append(failed.fatal_error_code)
+
+    monkeypatch.setattr(adapter, "_sidecar_call", _degraded)
+    monkeypatch.setattr(adapter, "_stop_sidecar", _stop_sidecar)
+    adapter.set_fatal_error_handler(_handler)
+    task = asyncio.get_running_loop().create_task(adapter._monitor_sidecar_health())
+    adapter._sidecar_health_task = task
+    await asyncio.wait([task], timeout=5)
+
+    assert not task.cancelled()
+    assert queued == ["UPSTREAM_STREAM_DEGRADED"]
