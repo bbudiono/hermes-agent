@@ -19,6 +19,7 @@ No Node sidecar is spawned and no ports are bound.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict
 
 import pytest
@@ -167,6 +168,7 @@ async def test_unexpected_sidecar_exit_raises_retryable_fatal(
     monkeypatch.setattr(adapter, "_notify_fatal_error", _fake_notify)
 
     await adapter._supervise_sidecar(_DeadProc(exit_code=137))  # type: ignore[arg-type]
+    await asyncio.gather(*adapter._fatal_notify_tasks)
 
     assert adapter.has_fatal_error is True
     assert adapter.fatal_error_code == "SIDECAR_CRASHED"
@@ -229,8 +231,139 @@ async def test_degraded_stream_health_raises_retryable_fatal(
     monkeypatch.setattr(adapter, "_notify_fatal_error", _fake_notify)
 
     await adapter._monitor_sidecar_health()
+    await asyncio.gather(*adapter._fatal_notify_tasks)
 
     assert adapter.has_fatal_error is True
     assert adapter.fatal_error_code == "UPSTREAM_STREAM_DEGRADED"
     assert adapter.fatal_error_retryable is True
     assert notified == [True]
+
+
+# -- repo_hermes_primary#36: the fatal handler tears down the task it came from --
+#
+# The gateway's handler disconnects the adapter, which cancels the health and
+# supervisor tasks. Awaited from inside one of them, the handler was cancelled at
+# its next await and never queued the reconnect: Photon stayed down for 57 h on
+# 2026-10-03 until a gateway restart. These drive disconnect() the way
+# GatewayRunner._await_adapter_cleanup_with_timeout does (a child task + wait).
+
+async def _gateway_handler(queued: list[str], failed: PhotonAdapter) -> None:
+    cleanup = asyncio.ensure_future(failed.disconnect())
+    await asyncio.wait({cleanup}, timeout=5)
+    await cleanup
+    queued.append(failed.fatal_error_code)
+
+
+async def _until(predicate, timeout: float = 5.0) -> None:
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_a_degraded_stream_still_queues_the_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _make_adapter(monkeypatch)
+    adapter._inbound_running = True
+    adapter._sidecar_health_interval = 0.0
+
+    async def _degraded(path: str, payload: Dict[str, Any]) -> Any:
+        return {"ok": True, "stream": {"ok": False, "state": "degraded"}}
+
+    async def _stop_sidecar() -> None:
+        await asyncio.sleep(0)
+
+    queued: list[str] = []
+    monkeypatch.setattr(adapter, "_sidecar_call", _degraded)
+    monkeypatch.setattr(adapter, "_stop_sidecar", _stop_sidecar)
+    adapter.set_fatal_error_handler(lambda a: _gateway_handler(queued, a))
+    adapter._sidecar_health_task = asyncio.get_running_loop().create_task(
+        adapter._monitor_sidecar_health()
+    )
+
+    await _until(lambda: queued)
+    assert queued == ["UPSTREAM_STREAM_DEGRADED"]
+
+
+@pytest.mark.asyncio
+async def test_two_hand_offs_in_one_incident_both_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Review r2 (mercury, hermes): the monitor and the supervisor can both fire;
+    # each hand-off must stay referenced until it finishes.
+    adapter = _make_adapter(monkeypatch)
+    ran: list[int] = []
+
+    async def _fake_notify() -> None:
+        await asyncio.sleep(0)
+        ran.append(1)
+
+    monkeypatch.setattr(adapter, "_notify_fatal_error", _fake_notify)
+    adapter._hand_off_fatal_error()
+    adapter._hand_off_fatal_error()
+    assert len(adapter._fatal_notify_tasks) == 2
+
+    await asyncio.gather(*adapter._fatal_notify_tasks)
+    assert ran == [1, 1]
+    await asyncio.sleep(0)  # done-callbacks run on the next loop pass
+    assert adapter._fatal_notify_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_the_real_gateway_handler_queues_photon_after_a_degraded_stream(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from gateway.config import GatewayConfig
+    from gateway.run import GatewayRunner
+
+    adapter = _make_adapter(monkeypatch)
+    adapter._inbound_running = True
+    adapter._sidecar_health_interval = 0.0
+
+    async def _degraded(path: str, payload: Dict[str, Any]) -> Any:
+        return {"ok": True, "stream": {"ok": False, "state": "degraded"}}
+
+    async def _stop_sidecar() -> None:
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(adapter, "_sidecar_call", _degraded)
+    monkeypatch.setattr(adapter, "_stop_sidecar", _stop_sidecar)
+    runner = GatewayRunner(GatewayConfig(platforms={}, sessions_dir=tmp_path / "sessions"))
+    runner.adapters = {adapter.platform: adapter}
+    runner.delivery_router.adapters = runner.adapters
+    runner.stop = AsyncMock()
+    adapter.set_fatal_error_handler(runner._handle_adapter_fatal_error)
+    adapter._sidecar_health_task = asyncio.get_running_loop().create_task(
+        adapter._monitor_sidecar_health()
+    )
+
+    await _until(lambda: adapter.platform in runner._failed_platforms)
+    assert runner.adapters == {}
+    runner.stop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_sidecar_still_queues_the_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _make_adapter(monkeypatch)
+    adapter._inbound_running = True
+
+    async def _stop_sidecar() -> None:  # the real one cancels the supervisor task
+        if adapter._sidecar_supervisor_task is not None:
+            adapter._sidecar_supervisor_task.cancel()
+            adapter._sidecar_supervisor_task = None
+        await asyncio.sleep(0)
+
+    queued: list[str] = []
+    monkeypatch.setattr(adapter, "_stop_sidecar", _stop_sidecar)
+    adapter.set_fatal_error_handler(lambda a: _gateway_handler(queued, a))
+    adapter._sidecar_supervisor_task = asyncio.get_running_loop().create_task(
+        adapter._supervise_sidecar(_DeadProc(exit_code=137))  # type: ignore[arg-type]
+    )
+
+    await _until(lambda: queued)
+    assert queued == ["SIDECAR_CRASHED"]

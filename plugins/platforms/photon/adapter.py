@@ -68,6 +68,15 @@ from .auth import load_project_credentials
 
 logger = logging.getLogger(__name__)
 
+
+def _log_fatal_notify_failure(task: "asyncio.Task") -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning(
+            "[photon] fatal-error notification failed: %s",
+            task.exception(),
+            exc_info=task.exception(),
+        )
+
 # ---------------------------------------------------------------------------
 # Constants
 
@@ -345,6 +354,9 @@ class PhotonAdapter(BasePlatformAdapter):
         self._sidecar_supervisor_task: Optional[asyncio.Task] = None
         self._inbound_task: Optional[asyncio.Task] = None
         self._sidecar_health_task: Optional[asyncio.Task] = None
+        # Strong refs: the loop holds tasks weakly, and two fatal paths can
+        # fire in one incident, so a single slot could drop one mid-run.
+        self._fatal_notify_tasks: set[asyncio.Task] = set()
         self._inbound_running = False
         self._http_client: Optional["httpx.AsyncClient"] = None
         self._sidecar_health_interval = 15.0
@@ -602,10 +614,7 @@ class PhotonAdapter(BasePlatformAdapter):
                 message,
                 retryable=True,
             )
-            try:
-                await self._notify_fatal_error()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("[photon] fatal-error notification failed: %s", exc)
+            self._hand_off_fatal_error()
             break
 
     async def _on_inbound_line(self, line: str) -> None:
@@ -1072,10 +1081,20 @@ class PhotonAdapter(BasePlatformAdapter):
                 f"Photon sidecar exited unexpectedly (code {exit_code})",
                 retryable=True,
             )
-            try:
-                await self._notify_fatal_error()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("[photon] fatal-error notification failed: %s", exc)
+            self._hand_off_fatal_error()
+
+    def _hand_off_fatal_error(self) -> None:
+        """Run the gateway's fatal handler in its own task.
+
+        The handler disconnects this adapter, which cancels the health and
+        supervisor tasks. Awaited from inside one of them, it was cancelled at
+        its next await and never queued the reconnect, so Photon stayed down
+        until a gateway restart (repo_hermes_primary#36).
+        """
+        task = asyncio.get_running_loop().create_task(self._notify_fatal_error())
+        task.add_done_callback(_log_fatal_notify_failure)
+        self._fatal_notify_tasks.add(task)
+        task.add_done_callback(self._fatal_notify_tasks.discard)
 
     async def _stop_sidecar(self) -> None:
         proc = self._sidecar_proc
