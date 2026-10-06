@@ -1633,7 +1633,8 @@ def _maybe_wrap_anthropic(
         pass
     try:
         from agent.copilot_acp_client import CopilotACPClient
-        if _safe_isinstance(client_obj, CopilotACPClient):
+        from agent.agy_cli_client import AgyCLIClient
+        if _safe_isinstance(client_obj, (CopilotACPClient, AgyCLIClient)):
             return client_obj
     except ImportError:
         pass
@@ -4602,7 +4603,8 @@ def _to_async_client(sync_client, model: str, is_vision: bool = False):
         pass
     try:
         from agent.copilot_acp_client import CopilotACPClient
-        if isinstance(sync_client, CopilotACPClient):
+        from agent.agy_cli_client import AgyCLIClient
+        if isinstance(sync_client, (CopilotACPClient, AgyCLIClient)):
             return sync_client, model
     except ImportError:
         pass
@@ -5256,6 +5258,26 @@ def resolve_provider_client(
                 else (client, final_model))
 
     if pconfig.auth_type == "external_process":
+        if provider == "agy":
+            from hermes_cli.auth import AuthError
+
+            try:
+                creds = resolve_external_process_provider_credentials(provider)
+            except AuthError as exc:  # agy not installed: skip this rung, don't fail the turn
+                logger.warning("resolve_provider_client: agy unavailable: %s", exc)
+                return None, None
+            except Exception:  # anything else is a bug: skip the rung but say so loudly
+                logger.exception("resolve_provider_client: agy credential resolution failed")
+                return None, None
+            final_model = model or (main_runtime.get("model") if main_runtime else None)
+            if not final_model:
+                logger.warning("resolve_provider_client: agy requested but no model was given")
+                return None, None
+            from agent.agy_cli_client import AgyCLIClient
+
+            client = AgyCLIClient(command=creds["command"])
+            return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
+                    else (client, final_model))
         creds = resolve_external_process_provider_credentials(provider)
         final_model = _normalize_resolved_model(
             model

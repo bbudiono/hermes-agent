@@ -232,6 +232,14 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         inference_base_url=DEFAULT_COPILOT_ACP_BASE_URL,
         base_url_env_var="COPILOT_ACP_BASE_URL",
     ),
+    # Gemini through the Antigravity CLI's OAuth login, never an API key
+    # (agent/agy_cli_client.py, repo_hermes_primary#39).
+    "agy": ProviderConfig(
+        id="agy",
+        name="Google Antigravity CLI",
+        auth_type="external_process",
+        inference_base_url="agy://local",
+    ),
     "gemini": ProviderConfig(
         id="gemini",
         name="Google AI Studio",
@@ -6605,6 +6613,17 @@ def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str,
     base_url = os.getenv(pconfig.base_url_env_var, "").strip() if pconfig.base_url_env_var else ""
     if not base_url:
         base_url = pconfig.inference_base_url
+
+    if provider_id == "agy":
+        agy = shutil.which("agy")
+        if not agy:
+            raise AuthError(
+                "Could not find the Antigravity CLI 'agy' on PATH. Install it and run `agy` once to log in.",
+                provider=provider_id,
+                code="missing_agy_cli",
+            )
+        return {"provider": provider_id, "api_key": "agy", "base_url": base_url,
+                "command": agy, "args": [], "source": "process"}
 
     command = (
         os.getenv("HERMES_COPILOT_ACP_COMMAND", "").strip()
