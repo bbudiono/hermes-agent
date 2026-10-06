@@ -5259,10 +5259,15 @@ def resolve_provider_client(
 
     if pconfig.auth_type == "external_process":
         if provider == "agy":
+            from hermes_cli.auth import AuthError
+
             try:
                 creds = resolve_external_process_provider_credentials(provider)
-            except Exception as exc:  # agy missing: skip this rung, don't fail the turn
+            except AuthError as exc:  # agy not installed: skip this rung, don't fail the turn
                 logger.warning("resolve_provider_client: agy unavailable: %s", exc)
+                return None, None
+            except Exception:  # anything else is a bug: skip the rung but say so loudly
+                logger.exception("resolve_provider_client: agy credential resolution failed")
                 return None, None
             final_model = model or (main_runtime.get("model") if main_runtime else None)
             if not final_model:

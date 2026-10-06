@@ -174,3 +174,24 @@ def test_streaming_requests_get_a_single_chunk_stream(monkeypatch):
     chunks = list(_create(AgyCLIClient(command="agy"), stream=True))
     # The trailing usage chunk carries no choices, as in the OpenAI stream shape.
     assert "".join(c.choices[0].delta.content or "" for c in chunks if c.choices) == "streamed"
+
+
+def test_a_client_level_timeout_applies_when_the_request_gives_none(monkeypatch):
+    # create_openai_client passes the agent's client_kwargs, which may carry the
+    # configured request timeout; it must not fall back to the 180s default (#39 review).
+    calls: list = []
+    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    _create(AgyCLIClient(command="agy", timeout=600.0))
+    assert "--print-timeout=600s" in calls[0][0]
+    assert calls[0][1]["timeout"] == 600.0 + 15
+
+
+@pytest.mark.parametrize("result", [
+    {"status": "ERROR", "error": {"message": "quota"}},          # structured error
+    {"status": "SUCCESS", "response": [{"text": "block list"}]},  # non-string response
+])
+def test_an_unexpected_result_shape_is_still_a_runtime_error(monkeypatch, result):
+    stdout = json.dumps({"event": "result", "result": result}) + "\n"
+    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run([], stdout=stdout))
+    with pytest.raises(RuntimeError, match="agy"):
+        _create(AgyCLIClient(command="agy"))

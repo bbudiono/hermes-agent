@@ -73,8 +73,11 @@ def _response(stdout: str) -> str:
         if isinstance(event, dict) and event.get("event") == "result":
             result = event.get("result") or {}
             if result.get("status") != "SUCCESS":
-                raise RuntimeError(f"agy reported {result.get('status')}: {result.get('error', '')[:300]}")
-            return (result.get("response") or "").strip()
+                raise RuntimeError(f"agy reported {result.get('status')}: {str(result.get('error', ''))[:300]}")
+            response = result.get("response") or ""
+            if not isinstance(response, str):  # keep every failure a RuntimeError (#39 review)
+                raise RuntimeError(f"agy returned a non-text response: {type(response).__name__}")
+            return response.strip()
     raise RuntimeError("agy returned no result event")
 
 
@@ -90,8 +93,9 @@ class AgyCLIClient:
     """Minimal `client.chat.completions.create(...)` over the agy CLI."""
 
     def __init__(self, *, command: str | None = None, api_key: str | None = None,
-                 base_url: str | None = None, **_: Any):
+                 base_url: str | None = None, timeout: Any = None, **_: Any):
         self._command = command or shutil.which("agy") or "agy"
+        self._timeout = timeout  # the agent's configured request timeout, from client_kwargs
         self.api_key = api_key or "agy"
         self.base_url = base_url or AGY_MARKER_BASE_URL
         self.chat = SimpleNamespace(completions=_Completions(self))
@@ -102,7 +106,7 @@ class AgyCLIClient:
 
     def _create(self, *, model: str | None = None, messages: list[dict[str, Any]] | None = None,
                 timeout: Any = None, stream: bool = False, **_: Any) -> Any:
-        seconds = _seconds(timeout)
+        seconds = _seconds(timeout if timeout is not None else self._timeout)
         # --sandbox plus an empty working directory keep injected text from reading
         # local files (#39 review r1). `--print=` with stream-json input reads stdin.
         argv = [self._command, "--print=", "--input-format", "stream-json", "--output-format", "stream-json",

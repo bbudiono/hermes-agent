@@ -42,3 +42,17 @@ def test_a_fallback_rung_without_agy_is_skipped_not_fatal(monkeypatch):
 
     monkeypatch.setattr(auth.shutil, "which", lambda name: None)
     assert auxiliary_client.resolve_provider_client("agy", "gemini-3-pro") == (None, None)
+
+
+def test_an_unexpected_resolution_error_is_logged_as_an_error_not_a_quiet_skip(monkeypatch, caplog):
+    import logging
+    from agent import auxiliary_client
+
+    def broken(name):
+        raise ValueError("PATH lookup broke")
+
+    monkeypatch.setattr(auth.shutil, "which", broken)
+    with caplog.at_level(logging.WARNING, logger=auxiliary_client.logger.name):
+        assert auxiliary_client.resolve_provider_client("agy", "gemini-3-pro") == (None, None)
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors and "PATH lookup broke" in errors[0].getMessage() + str(errors[0].exc_info)
