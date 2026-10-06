@@ -1,14 +1,19 @@
 """OpenAI-client-compatible facade over the Google Antigravity CLI (`agy`).
 
-Gemini is reached here only through `agy --print` on the user's Antigravity OAuth
-login; no Google API key is read or passed. The rung is chat-only: tools are not
-offered and no tool calls are parsed, so a turn that needs tools ends with text.
-Any failure raises, so the agent loop retries and then fails over to the next
+Gemini is reached here only through `agy` on the user's Antigravity OAuth login;
+no Google API key is read or passed. The rung is chat-only: tools are not offered
+and no tool calls are parsed, so a turn that needs tools ends with text. Any
+failure raises, so the agent loop retries and then fails over to the next
 `fallback_providers` rung (repo_hermes_primary#39). Modelled on CopilotACPClient.
+
+The conversation goes in on stdin as one stream-json `user` event, never on the
+command line: a single argv element over 128 KiB fails with E2BIG on Linux, and
+anything on the command line is visible in `ps` (review r2).
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import tempfile
@@ -24,13 +29,22 @@ _DEFAULT_TIMEOUT_SECONDS = 180.0
 _GOOGLE_KEY_VARS = ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY")
 
 
+def _text(content: Any) -> str:
+    if isinstance(content, list):  # multimodal parts: keep text, name what was dropped
+        parts = [p.get("text", "") if p.get("type", "text") == "text" else "[non-text attachment omitted]"
+                 for p in content if isinstance(p, dict)]
+        return "\n".join(p for p in parts if p)
+    return content or ""
+
+
 def _flatten(messages: list[dict[str, Any]]) -> str:
     """One prompt from an OpenAI message list: system text first, then the turns."""
     parts: list[str] = []
     for msg in messages:
-        content = msg.get("content")
-        if isinstance(content, list):  # multimodal parts: keep the text ones
-            content = "\n".join(p.get("text", "") for p in content if isinstance(p, dict))
+        content = _text(msg.get("content"))
+        calls = [c.get("function", {}).get("name", "?") for c in msg.get("tool_calls") or []]
+        if calls:  # keep the call so a following tool result is not orphaned
+            content = (content + "\n" if content else "") + f"[called tools: {', '.join(calls)}]"
         if not content:
             continue
         role = msg.get("role", "user")
@@ -49,6 +63,21 @@ def _seconds(timeout: Any) -> float:
     return max(numeric) if numeric else _DEFAULT_TIMEOUT_SECONDS
 
 
+def _response(stdout: str) -> str:
+    """The answer from agy's stream-json `result` event; raises on an error or no result."""
+    for line in reversed((stdout or "").splitlines()):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("event") == "result":
+            result = event.get("result") or {}
+            if result.get("status") != "SUCCESS":
+                raise RuntimeError(f"agy reported {result.get('status')}: {result.get('error', '')[:300]}")
+            return (result.get("response") or "").strip()
+    raise RuntimeError("agy returned no result event")
+
+
 class _Completions:
     def __init__(self, client: "AgyCLIClient"):
         self._client = client
@@ -58,7 +87,7 @@ class _Completions:
 
 
 class AgyCLIClient:
-    """Minimal `client.chat.completions.create(...)` over `agy --print`."""
+    """Minimal `client.chat.completions.create(...)` over the agy CLI."""
 
     def __init__(self, *, command: str | None = None, api_key: str | None = None,
                  base_url: str | None = None, **_: Any):
@@ -74,27 +103,28 @@ class AgyCLIClient:
     def _create(self, *, model: str | None = None, messages: list[dict[str, Any]] | None = None,
                 timeout: Any = None, stream: bool = False, **_: Any) -> Any:
         seconds = _seconds(timeout)
-        # --print=<prompt> keeps any prompt text from being read as a flag; --sandbox plus an
-        # empty working directory keep injected text from reading local files (#39 review r1).
-        argv = [self._command, f"--print={_flatten(messages or [])}", "--output-format", "text",
+        # --sandbox plus an empty working directory keep injected text from reading
+        # local files (#39 review r1). `--print=` with stream-json input reads stdin.
+        argv = [self._command, "--print=", "--input-format", "stream-json", "--output-format", "stream-json",
                 "--disable-slash-commands", "--mode", "plan", "--sandbox",
-                f"--print-timeout={int(seconds)}s"]
+                f"--print-timeout={max(1, int(seconds))}s"]
         if model:
-            argv += ["--model", model]
+            argv += ["--model", model.removeprefix("google/")]
+        stdin = json.dumps({"event": "user", "message": {"content": _flatten(messages or [])}}) + "\n"
         env = hermes_subprocess_env(inherit_credentials=False)
         for key in _GOOGLE_KEY_VARS:  # OAuth login only (provider-CLI mandate)
             env.pop(key, None)
         try:
             with tempfile.TemporaryDirectory(prefix="hermes-agy-") as workdir:
-                proc = subprocess.run(argv, capture_output=True, text=True, timeout=seconds + 15,
-                                      env=env, stdin=subprocess.DEVNULL, cwd=workdir)
+                proc = subprocess.run(argv, input=stdin, capture_output=True, text=True,
+                                      timeout=seconds + 15, env=env, cwd=workdir)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"agy timed out after {seconds:.0f}s") from exc
-        except FileNotFoundError as exc:
-            raise RuntimeError(f"agy CLI not found at '{self._command}'") from exc
-        text = (proc.stdout or "").strip()
+        except OSError as exc:  # missing, not executable, or the OS refused to start it
+            raise RuntimeError(f"agy could not start '{self._command}': {exc}") from exc
         if proc.returncode != 0:
             raise RuntimeError(f"agy exited {proc.returncode}: {(proc.stderr or '').strip()[-300:]}")
+        text = _response(proc.stdout)
         if not text:
             raise RuntimeError("agy returned an empty response")
 

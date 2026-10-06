@@ -35,7 +35,8 @@ def test_activating_the_agy_rung_then_a_request_runs_the_agy_cli(monkeypatch):
 
     def fake_run(argv, **kw):
         calls.append(argv)
-        return SimpleNamespace(returncode=0, stdout="from gemini", stderr="")
+        out = '{"event":"result","result":{"status":"SUCCESS","response":"from gemini"}}\n'
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
 
     monkeypatch.setattr(agy_mod.subprocess, "run", fake_run)
     agent = _agent_with_agy_rung()
