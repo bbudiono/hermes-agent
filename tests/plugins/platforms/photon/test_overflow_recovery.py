@@ -168,6 +168,7 @@ async def test_unexpected_sidecar_exit_raises_retryable_fatal(
     monkeypatch.setattr(adapter, "_notify_fatal_error", _fake_notify)
 
     await adapter._supervise_sidecar(_DeadProc(exit_code=137))  # type: ignore[arg-type]
+    await adapter._fatal_notify_task
 
     assert adapter.has_fatal_error is True
     assert adapter.fatal_error_code == "SIDECAR_CRASHED"
@@ -230,6 +231,7 @@ async def test_degraded_stream_health_raises_retryable_fatal(
     monkeypatch.setattr(adapter, "_notify_fatal_error", _fake_notify)
 
     await adapter._monitor_sidecar_health()
+    await adapter._fatal_notify_task
 
     assert adapter.has_fatal_error is True
     assert adapter.fatal_error_code == "UPSTREAM_STREAM_DEGRADED"
@@ -237,14 +239,31 @@ async def test_degraded_stream_health_raises_retryable_fatal(
     assert notified == [True]
 
 
+# -- repo_hermes_primary#36: the fatal handler tears down the task it came from --
+#
+# The gateway's handler disconnects the adapter, which cancels the health and
+# supervisor tasks. Awaited from inside one of them, the handler was cancelled at
+# its next await and never queued the reconnect: Photon stayed down for 57 h on
+# 2026-10-03 until a gateway restart. These drive disconnect() the way
+# GatewayRunner._await_adapter_cleanup_with_timeout does (a child task + wait).
+
+async def _gateway_handler(queued: list[str], failed: PhotonAdapter) -> None:
+    cleanup = asyncio.ensure_future(failed.disconnect())
+    await asyncio.wait({cleanup}, timeout=5)
+    await cleanup
+    queued.append(failed.fatal_error_code)
+
+
+async def _until(predicate, timeout: float = 5.0) -> None:
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
 @pytest.mark.asyncio
-async def test_degraded_stream_teardown_from_the_health_task_reaches_the_reconnect_queue(
+async def test_a_degraded_stream_still_queues_the_reconnect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # repo_hermes_primary#36: the gateway's fatal handler runs inside the health
-    # task and awaits disconnect(), which cancelled that same task. The next
-    # await raised CancelledError, so the handler never queued the reconnect and
-    # Photon stayed down until a gateway restart (57 h on 2026-10-03).
     adapter = _make_adapter(monkeypatch)
     adapter._inbound_running = True
     adapter._sidecar_health_interval = 0.0
@@ -253,20 +272,39 @@ async def test_degraded_stream_teardown_from_the_health_task_reaches_the_reconne
         return {"ok": True, "stream": {"ok": False, "state": "degraded"}}
 
     async def _stop_sidecar() -> None:
-        await asyncio.sleep(0)  # a real await, like the sidecar teardown
+        await asyncio.sleep(0)
 
     queued: list[str] = []
-
-    async def _handler(failed: PhotonAdapter) -> None:
-        await failed.disconnect()  # what _safe_adapter_disconnect does
-        queued.append(failed.fatal_error_code)
-
     monkeypatch.setattr(adapter, "_sidecar_call", _degraded)
     monkeypatch.setattr(adapter, "_stop_sidecar", _stop_sidecar)
-    adapter.set_fatal_error_handler(_handler)
-    task = asyncio.get_running_loop().create_task(adapter._monitor_sidecar_health())
-    adapter._sidecar_health_task = task
-    await asyncio.wait([task], timeout=5)
+    adapter.set_fatal_error_handler(lambda a: _gateway_handler(queued, a))
+    adapter._sidecar_health_task = asyncio.get_running_loop().create_task(
+        adapter._monitor_sidecar_health()
+    )
 
-    assert not task.cancelled()
+    await _until(lambda: queued)
     assert queued == ["UPSTREAM_STREAM_DEGRADED"]
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_sidecar_still_queues_the_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _make_adapter(monkeypatch)
+    adapter._inbound_running = True
+
+    async def _stop_sidecar() -> None:  # the real one cancels the supervisor task
+        if adapter._sidecar_supervisor_task is not None:
+            adapter._sidecar_supervisor_task.cancel()
+            adapter._sidecar_supervisor_task = None
+        await asyncio.sleep(0)
+
+    queued: list[str] = []
+    monkeypatch.setattr(adapter, "_stop_sidecar", _stop_sidecar)
+    adapter.set_fatal_error_handler(lambda a: _gateway_handler(queued, a))
+    adapter._sidecar_supervisor_task = asyncio.get_running_loop().create_task(
+        adapter._supervise_sidecar(_DeadProc(exit_code=137))  # type: ignore[arg-type]
+    )
+
+    await _until(lambda: queued)
+    assert queued == ["SIDECAR_CRASHED"]
