@@ -287,6 +287,41 @@ async def test_a_degraded_stream_still_queues_the_reconnect(
 
 
 @pytest.mark.asyncio
+async def test_the_real_gateway_handler_queues_photon_after_a_degraded_stream(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from gateway.config import GatewayConfig
+    from gateway.run import GatewayRunner
+
+    adapter = _make_adapter(monkeypatch)
+    adapter._inbound_running = True
+    adapter._sidecar_health_interval = 0.0
+
+    async def _degraded(path: str, payload: Dict[str, Any]) -> Any:
+        return {"ok": True, "stream": {"ok": False, "state": "degraded"}}
+
+    async def _stop_sidecar() -> None:
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(adapter, "_sidecar_call", _degraded)
+    monkeypatch.setattr(adapter, "_stop_sidecar", _stop_sidecar)
+    runner = GatewayRunner(GatewayConfig(platforms={}, sessions_dir=tmp_path / "sessions"))
+    runner.adapters = {adapter.platform: adapter}
+    runner.delivery_router.adapters = runner.adapters
+    runner.stop = AsyncMock()
+    adapter.set_fatal_error_handler(runner._handle_adapter_fatal_error)
+    adapter._sidecar_health_task = asyncio.get_running_loop().create_task(
+        adapter._monitor_sidecar_health()
+    )
+
+    await _until(lambda: adapter.platform in runner._failed_platforms)
+    assert runner.adapters == {}
+    runner.stop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_a_crashed_sidecar_still_queues_the_reconnect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -71,7 +71,11 @@ logger = logging.getLogger(__name__)
 
 def _log_fatal_notify_failure(task: "asyncio.Task") -> None:
     if not task.cancelled() and task.exception() is not None:
-        logger.warning("[photon] fatal-error notification failed: %s", task.exception())
+        logger.warning(
+            "[photon] fatal-error notification failed: %s",
+            task.exception(),
+            exc_info=task.exception(),
+        )
 
 # ---------------------------------------------------------------------------
 # Constants
