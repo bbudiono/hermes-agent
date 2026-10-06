@@ -354,7 +354,9 @@ class PhotonAdapter(BasePlatformAdapter):
         self._sidecar_supervisor_task: Optional[asyncio.Task] = None
         self._inbound_task: Optional[asyncio.Task] = None
         self._sidecar_health_task: Optional[asyncio.Task] = None
-        self._fatal_notify_task: Optional[asyncio.Task] = None
+        # Strong refs: the loop holds tasks weakly, and two fatal paths can
+        # fire in one incident, so a single slot could drop one mid-run.
+        self._fatal_notify_tasks: set[asyncio.Task] = set()
         self._inbound_running = False
         self._http_client: Optional["httpx.AsyncClient"] = None
         self._sidecar_health_interval = 15.0
@@ -1091,7 +1093,8 @@ class PhotonAdapter(BasePlatformAdapter):
         """
         task = asyncio.get_running_loop().create_task(self._notify_fatal_error())
         task.add_done_callback(_log_fatal_notify_failure)
-        self._fatal_notify_task = task
+        self._fatal_notify_tasks.add(task)
+        task.add_done_callback(self._fatal_notify_tasks.discard)
 
     async def _stop_sidecar(self) -> None:
         proc = self._sidecar_proc

@@ -168,7 +168,7 @@ async def test_unexpected_sidecar_exit_raises_retryable_fatal(
     monkeypatch.setattr(adapter, "_notify_fatal_error", _fake_notify)
 
     await adapter._supervise_sidecar(_DeadProc(exit_code=137))  # type: ignore[arg-type]
-    await adapter._fatal_notify_task
+    await asyncio.gather(*adapter._fatal_notify_tasks)
 
     assert adapter.has_fatal_error is True
     assert adapter.fatal_error_code == "SIDECAR_CRASHED"
@@ -231,7 +231,7 @@ async def test_degraded_stream_health_raises_retryable_fatal(
     monkeypatch.setattr(adapter, "_notify_fatal_error", _fake_notify)
 
     await adapter._monitor_sidecar_health()
-    await adapter._fatal_notify_task
+    await asyncio.gather(*adapter._fatal_notify_tasks)
 
     assert adapter.has_fatal_error is True
     assert adapter.fatal_error_code == "UPSTREAM_STREAM_DEGRADED"
@@ -284,6 +284,30 @@ async def test_a_degraded_stream_still_queues_the_reconnect(
 
     await _until(lambda: queued)
     assert queued == ["UPSTREAM_STREAM_DEGRADED"]
+
+
+@pytest.mark.asyncio
+async def test_two_hand_offs_in_one_incident_both_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Review r2 (mercury, hermes): the monitor and the supervisor can both fire;
+    # each hand-off must stay referenced until it finishes.
+    adapter = _make_adapter(monkeypatch)
+    ran: list[int] = []
+
+    async def _fake_notify() -> None:
+        await asyncio.sleep(0)
+        ran.append(1)
+
+    monkeypatch.setattr(adapter, "_notify_fatal_error", _fake_notify)
+    adapter._hand_off_fatal_error()
+    adapter._hand_off_fatal_error()
+    assert len(adapter._fatal_notify_tasks) == 2
+
+    await asyncio.gather(*adapter._fatal_notify_tasks)
+    assert ran == [1, 1]
+    await asyncio.sleep(0)  # done-callbacks run on the next loop pass
+    assert adapter._fatal_notify_tasks == set()
 
 
 @pytest.mark.asyncio
