@@ -38,7 +38,7 @@ def test_activating_the_agy_rung_then_a_request_runs_the_agy_cli(monkeypatch):
         out = '{"event":"result","result":{"status":"SUCCESS","response":"from gemini"}}\n'
         return SimpleNamespace(returncode=0, stdout=out, stderr="")
 
-    monkeypatch.setattr(agy_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(agy_mod, "_run", fake_run)
     agent = _agent_with_agy_rung()
 
     assert agent._try_activate_fallback("primary failed") is True

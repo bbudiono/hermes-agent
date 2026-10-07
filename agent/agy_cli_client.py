@@ -14,7 +14,9 @@ anything on the command line is visible in `ps` (review r2).
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import signal
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -27,6 +29,29 @@ AGY_MARKER_BASE_URL = "agy://local"
 # Short on purpose: a hung agy must hand the turn to the next rung quickly (#39 review r1).
 _DEFAULT_TIMEOUT_SECONDS = 180.0
 _GOOGLE_KEY_VARS = ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY")
+_GRACE_SECONDS = 15  # past agy's own --print-timeout before the process group is killed
+
+
+def _run(argv: list[str], *, input: str, timeout: float, env: dict, cwd: str) -> SimpleNamespace:
+    """subprocess.run, but a timeout kills agy's whole process group and returns at once.
+
+    subprocess.run kills only agy and then waits on the pipes again, so a child that
+    inherited them (a plan-mode shell) would hang the turn instead of failing over (#40).
+    """
+    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            encoding="utf-8", errors="replace", env=env, cwd=cwd, start_new_session=True)
+    try:
+        out, err = proc.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":  # no process groups to signal; kill agy itself
+            proc.kill()
+        else:
+            try:
+                os.killpg(proc.pid, getattr(signal, "SIGKILL", signal.SIGTERM))  # windows-footgun: ok - POSIX branch
+            except ProcessLookupError:  # agy already exited
+                pass
+        raise
+    return SimpleNamespace(returncode=proc.returncode, stdout=out, stderr=err)
 
 
 def _text(content: Any) -> str:
@@ -126,8 +151,7 @@ class AgyCLIClient:
             env.pop(key, None)
         try:
             with tempfile.TemporaryDirectory(prefix="hermes-agy-") as workdir:
-                proc = subprocess.run(argv, input=stdin, capture_output=True, text=True,
-                                      timeout=seconds + 15, env=env, cwd=workdir)
+                proc = _run(argv, input=stdin, timeout=seconds + _GRACE_SECONDS, env=env, cwd=workdir)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"agy timed out after {seconds:.0f}s") from exc
         except OSError as exc:  # missing, not executable, or the OS refused to start it

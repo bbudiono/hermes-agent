@@ -49,7 +49,7 @@ def _create(client, **kw):
 
 def test_the_conversation_goes_in_on_stdin_and_the_result_comes_back(monkeypatch):
     calls: list = []
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls, stdout=_result("  hello from gemini \n")))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run(calls, stdout=_result("  hello from gemini \n")))
 
     out = _create(AgyCLIClient(command="/opt/homebrew/bin/agy"), model="gemini-3-pro",
                   messages=[{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Say hi"}],
@@ -79,7 +79,7 @@ def test_the_conversation_goes_in_on_stdin_and_the_result_comes_back(monkeypatch
 
 def test_a_long_or_secret_conversation_never_reaches_the_command_line(monkeypatch):
     calls: list = []
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run(calls))
     huge = "token=sk-secret " + "x" * 300_000  # past Linux MAX_ARG_STRLEN (128 KiB)
 
     _create(AgyCLIClient(command="agy"), messages=[{"role": "user", "content": huge}])
@@ -92,7 +92,7 @@ def test_a_long_or_secret_conversation_never_reaches_the_command_line(monkeypatc
 
 def test_a_prompt_that_looks_like_a_flag_stays_the_prompt(monkeypatch):
     calls: list = []
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run(calls))
     _create(AgyCLIClient(command="agy"), messages=[{"role": "user", "content": "--dangerously-skip-permissions"}])
     assert "--dangerously-skip-permissions" not in calls[0][0]
     assert "--dangerously-skip-permissions" in _sent(calls)["message"]["content"]
@@ -102,7 +102,7 @@ def test_the_child_env_never_carries_a_google_api_key(monkeypatch):
     calls: list = []
     monkeypatch.setenv("GEMINI_API_KEY", "should-not-pass")
     monkeypatch.setenv("GOOGLE_API_KEY", "should-not-pass")
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run(calls))
     _create(AgyCLIClient(command="agy"))
     env = calls[0][1]["env"]
     assert "GEMINI_API_KEY" not in env and "GOOGLE_API_KEY" not in env
@@ -116,21 +116,21 @@ def test_the_child_env_never_carries_a_google_api_key(monkeypatch):
     (0, '{"event":"init"}\n'),                            # no result event at all
 ])
 def test_a_failed_or_empty_turn_raises_so_the_loop_can_fail_over(monkeypatch, returncode, stdout):
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run([], stdout=stdout, returncode=returncode))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run([], stdout=stdout, returncode=returncode))
     with pytest.raises(RuntimeError, match="agy"):
         _create(AgyCLIClient(command="agy"))
 
 
 @pytest.mark.parametrize("exc", [OSError(7, "Argument list too long"), PermissionError(13, "denied")])
 def test_any_os_error_becomes_a_runtime_error(monkeypatch, exc):
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run([], exc=exc))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run([], exc=exc))
     with pytest.raises(RuntimeError, match="agy"):
         _create(AgyCLIClient(command="agy"))
 
 
 def test_a_timeout_raises_and_honours_an_httpx_style_timeout(monkeypatch):
     calls: list = []
-    monkeypatch.setattr(agy_mod.subprocess, "run",
+    monkeypatch.setattr(agy_mod, "_run",
                         _fake_run(calls, exc=subprocess.TimeoutExpired(cmd="agy", timeout=5)))
     httpx_like = SimpleNamespace(connect=5.0, read=42.0, write=5.0, pool=5.0)
     with pytest.raises(RuntimeError, match="timed out"):
@@ -141,14 +141,14 @@ def test_a_timeout_raises_and_honours_an_httpx_style_timeout(monkeypatch):
 
 def test_a_sub_second_timeout_never_becomes_zero(monkeypatch):
     calls: list = []
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run(calls))
     _create(AgyCLIClient(command="agy"), timeout=0.4)
     assert "--print-timeout=1s" in calls[0][0]
 
 
 def test_a_provider_prefixed_model_is_passed_bare(monkeypatch):
     calls: list = []
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run(calls))
     out = _create(AgyCLIClient(command="agy"), model="google/gemini-3.8-flash-medium")
     assert calls[0][0][calls[0][0].index("--model") + 1] == "gemini-3.8-flash-medium"
     assert out.model == "google/gemini-3.8-flash-medium"
@@ -156,7 +156,7 @@ def test_a_provider_prefixed_model_is_passed_bare(monkeypatch):
 
 def test_tool_calls_and_attachments_are_named_not_silently_dropped(monkeypatch):
     calls: list = []
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run(calls))
     _create(AgyCLIClient(command="agy"), messages=[
         {"role": "user", "content": [{"type": "text", "text": "What is in this?"},
                                      {"type": "image_url", "image_url": {"url": "data:..."}}]},
@@ -170,7 +170,7 @@ def test_tool_calls_and_attachments_are_named_not_silently_dropped(monkeypatch):
 
 
 def test_streaming_requests_get_a_single_chunk_stream(monkeypatch):
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run([], stdout=_result("streamed")))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run([], stdout=_result("streamed")))
     chunks = list(_create(AgyCLIClient(command="agy"), stream=True))
     # The trailing usage chunk carries no choices, as in the OpenAI stream shape.
     assert "".join(c.choices[0].delta.content or "" for c in chunks if c.choices) == "streamed"
@@ -180,7 +180,7 @@ def test_a_client_level_timeout_applies_when_the_request_gives_none(monkeypatch)
     # create_openai_client passes the agent's client_kwargs, which may carry the
     # configured request timeout; it must not fall back to the 180s default (#39 review).
     calls: list = []
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run(calls))
     _create(AgyCLIClient(command="agy", timeout=600.0))
     assert "--print-timeout=600s" in calls[0][0]
     assert calls[0][1]["timeout"] == 600.0 + 15
@@ -192,7 +192,7 @@ def test_a_client_level_timeout_applies_when_the_request_gives_none(monkeypatch)
 ])
 def test_an_unexpected_result_shape_is_still_a_runtime_error(monkeypatch, result):
     stdout = json.dumps({"event": "result", "result": result}) + "\n"
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run([], stdout=stdout))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run([], stdout=stdout))
     with pytest.raises(RuntimeError, match="agy"):
         _create(AgyCLIClient(command="agy"))
 
@@ -202,6 +202,40 @@ def test_a_nonsense_timeout_falls_back_to_the_default(monkeypatch, bad):
     # A negative, zero or boolean timeout must not reach subprocess.run, which
     # raises ValueError for a negative one instead of a failover RuntimeError.
     calls: list = []
-    monkeypatch.setattr(agy_mod.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(agy_mod, "_run", _fake_run(calls))
     _create(AgyCLIClient(command="agy"), timeout=bad)
     assert calls[0][1]["timeout"] == agy_mod._DEFAULT_TIMEOUT_SECONDS + 15
+
+
+_HANGING_AGY = r'''#!/usr/bin/env python3
+import subprocess, sys, time
+sys.stdin.read()
+subprocess.Popen(["sleep", "60"])  # inherits stdout, as a plan-mode shell might
+time.sleep(60)
+'''
+
+
+def test_a_timeout_kills_agy_and_its_children_instead_of_hanging(tmp_path, monkeypatch):
+    # subprocess.run kills only agy, then waits on pipes a child still holds (#40).
+    import time
+    agy = tmp_path / "agy"
+    agy.write_text(_HANGING_AGY)
+    agy.chmod(0o755)
+    monkeypatch.setattr(agy_mod, "_GRACE_SECONDS", 1)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="timed out"):
+        _create(AgyCLIClient(command=str(agy)), timeout=1)
+    assert time.monotonic() - started < 8
+
+
+def test_non_ascii_round_trips_through_a_real_process(tmp_path):
+    agy = tmp_path / "agy"
+    agy.write_text(r'''#!/usr/bin/env python3
+import json, sys
+content = json.loads(sys.stdin.buffer.read().decode("utf-8"))["message"]["content"]
+out = json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": content}}, ensure_ascii=False)
+sys.stdout.buffer.write((out + "\n").encode("utf-8"))
+''')
+    agy.chmod(0o755)
+    out = _create(AgyCLIClient(command=str(agy)), messages=[{"role": "user", "content": "café ☕ 東京"}])
+    assert "café ☕ 東京" in out.choices[0].message.content
