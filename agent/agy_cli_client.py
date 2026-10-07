@@ -43,10 +43,13 @@ def _run(argv: list[str], *, input: str, timeout: float, env: dict, cwd: str) ->
     try:
         out, err = proc.communicate(input, timeout=timeout)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:  # agy already exited
-            pass
+        if os.name == "nt":  # no process groups to signal; kill agy itself
+            proc.kill()
+        else:
+            try:
+                os.killpg(proc.pid, getattr(signal, "SIGKILL", signal.SIGTERM))  # windows-footgun: ok - POSIX branch
+            except ProcessLookupError:  # agy already exited
+                pass
         raise
     return SimpleNamespace(returncode=proc.returncode, stdout=out, stderr=err)
 
