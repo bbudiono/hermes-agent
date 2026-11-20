@@ -61,9 +61,13 @@ def test_the_conversation_goes_in_on_stdin_and_the_result_comes_back(monkeypatch
     assert argv[argv.index("--input-format") + 1] == "stream-json"
     assert argv[argv.index("--output-format") + 1] == "stream-json"
     assert argv[argv.index("--model") + 1] == "gemini-3-pro"
-    assert argv[argv.index("--mode") + 1] == "plan"  # chat only: never edits files
+    # Owner 2026-11-20 (repo_hermes_primary#41): print mode soft-denies every tool
+    # confirmation, so a turn where the model calls a tool ends with no text and the
+    # loop sees "agy returned an empty response". Tools are auto-approved; --sandbox
+    # and the empty temp working directory still fence what they can touch.
+    assert "--dangerously-skip-permissions" in argv
     assert "--sandbox" in argv and "--disable-slash-commands" in argv
-    assert "--dangerously-skip-permissions" not in argv
+    assert "--mode" not in argv  # agy: "--mode plan has no effect while slash command expansion is disabled"
     assert kwargs["cwd"] and kwargs["cwd"] != os.getcwd()  # an empty temp dir, not the daemon's
     event = _sent(calls)
     assert event["event"] == "user"
@@ -93,9 +97,9 @@ def test_a_long_or_secret_conversation_never_reaches_the_command_line(monkeypatc
 def test_a_prompt_that_looks_like_a_flag_stays_the_prompt(monkeypatch):
     calls: list = []
     monkeypatch.setattr(agy_mod, "_run", _fake_run(calls))
-    _create(AgyCLIClient(command="agy"), messages=[{"role": "user", "content": "--dangerously-skip-permissions"}])
-    assert "--dangerously-skip-permissions" not in calls[0][0]
-    assert "--dangerously-skip-permissions" in _sent(calls)["message"]["content"]
+    _create(AgyCLIClient(command="agy"), messages=[{"role": "user", "content": "--output-format=text"}])
+    assert "--output-format=text" not in calls[0][0]
+    assert "--output-format=text" in _sent(calls)["message"]["content"]
 
 
 def test_the_child_env_never_carries_a_google_api_key(monkeypatch):

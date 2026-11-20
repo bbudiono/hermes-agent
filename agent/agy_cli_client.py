@@ -140,8 +140,10 @@ class AgyCLIClient:
         seconds = _seconds(timeout if timeout is not None else self._timeout)
         # --sandbox plus an empty working directory keep injected text from reading
         # local files (#39 review r1). `--print=` with stream-json input reads stdin.
+        # Print mode soft-denies every tool confirmation, so a turn whose model calls a
+        # tool ended empty; tools are auto-approved inside the sandbox (owner, #41).
         argv = [self._command, "--print=", "--input-format", "stream-json", "--output-format", "stream-json",
-                "--disable-slash-commands", "--mode", "plan", "--sandbox",
+                "--disable-slash-commands", "--dangerously-skip-permissions", "--sandbox",
                 f"--print-timeout={max(1, int(seconds))}s"]
         if model:
             argv += ["--model", model.removeprefix("google/")]
